@@ -1,32 +1,118 @@
 """
-SQLite database for storing historical NRL match and try-scoring data.
+PostgreSQL (Supabase) database for storing historical NRL match and try-scoring data.
+Uses psycopg2 with connection pooling.
 """
 
-import sqlite3
 import os
 import logging
+import atexit
+
+import psycopg2
+import psycopg2.pool
+import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get("NRL_DB_PATH", "/app/data/nrl_historical.db")
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://postgres:postgres@localhost:5432/nrl"
+)
+
+# Connection pool (min 1, max 10 connections)
+_pool = None
+
+
+def _get_pool():
+    """Lazily initialise and return the connection pool."""
+    global _pool
+    if _pool is None or _pool.closed:
+        # Force sslmode and use options to prefer IPv4
+        dsn = DATABASE_URL
+        if "sslmode" not in dsn:
+            sep = "&" if "?" in dsn else "?"
+            dsn += f"{sep}sslmode=require"
+        _pool = psycopg2.pool.ThreadedConnectionPool(
+            1, 10, dsn,
+            options="-c statement_timeout=30000",
+        )
+        atexit.register(_close_pool)
+    return _pool
+
+
+def _close_pool():
+    global _pool
+    if _pool is not None and not _pool.closed:
+        _pool.closeall()
+        _pool = None
+
+
+SCHEMA = "nrltp"
+
+
+class PooledConnection:
+    """Wrapper around a psycopg2 connection that returns it to the pool on close()
+    and exposes an execute/fetchone/fetchall interface compatible with the old code."""
+
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+        # Always use RealDictCursor so rows behave like dicts
+        self._conn.autocommit = False
+        # Set search path so all queries use the nrltp schema
+        cur = self._conn.cursor()
+        cur.execute(f"SET search_path TO {SCHEMA}, public")
+        cur.close()
+
+    def execute(self, query, params=None):
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(query, params)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        """Return connection to the pool instead of truly closing it."""
+        try:
+            self._conn.rollback()  # discard any uncommitted work
+        except Exception:
+            pass
+        self._pool.putconn(self._conn)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        self.close()
+        return False
 
 
 def get_db():
-    """Get a database connection."""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get a database connection from the pool."""
+    pool = _get_pool()
+    conn = pool.getconn()
+    return PooledConnection(conn, pool)
 
 
 def init_db():
     """Create tables if they don't exist, and run migrations."""
     conn = get_db()
 
-    # Core tables (without new columns — migration adds them below)
-    conn.executescript("""
+    # Create schema
+    conn.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
+    conn.commit()
+
+    # Core tables
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS matches (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             season INTEGER NOT NULL,
             round_number INTEGER NOT NULL,
             round_title TEXT,
@@ -39,10 +125,12 @@ def init_db():
             venue TEXT,
             kickoff TEXT,
             UNIQUE(season, round_number, home_team, away_team)
-        );
+        )
+    """)
 
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS players (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             match_id INTEGER NOT NULL,
             team TEXT NOT NULL,
             side TEXT NOT NULL,
@@ -51,44 +139,52 @@ def init_db():
             position TEXT,
             is_interchange INTEGER DEFAULT 0,
             FOREIGN KEY (match_id) REFERENCES matches(id)
-        );
+        )
+    """)
 
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS tries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             match_id INTEGER NOT NULL,
             team TEXT NOT NULL,
             side TEXT NOT NULL,
             player_name TEXT NOT NULL,
             minute TEXT,
             FOREIGN KEY (match_id) REFERENCES matches(id)
-        );
+        )
+    """)
 
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS scrape_progress (
             season INTEGER NOT NULL,
             round_number INTEGER NOT NULL,
             completed INTEGER DEFAULT 0,
             PRIMARY KEY (season, round_number)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_players_name ON players(name);
-        CREATE INDEX IF NOT EXISTS idx_players_position ON players(position);
-        CREATE INDEX IF NOT EXISTS idx_players_match ON players(match_id);
-        CREATE INDEX IF NOT EXISTS idx_tries_match ON tries(match_id);
-        CREATE INDEX IF NOT EXISTS idx_tries_player ON tries(player_name);
-        CREATE INDEX IF NOT EXISTS idx_matches_season ON matches(season);
-        CREATE INDEX IF NOT EXISTS idx_matches_teams ON matches(home_team, away_team);
+        )
     """)
 
-    # Migrations — add field_side column and interchanges table
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_name ON players(name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_position ON players(position)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_match ON players(match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_match ON tries(match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_player ON tries(player_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_season ON matches(season)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_teams ON matches(home_team, away_team)")
+
+    conn.commit()
+
+    # Migration: add field_side column to tries
     try:
         conn.execute("ALTER TABLE tries ADD COLUMN field_side TEXT DEFAULT ''")
+        conn.commit()
         logger.info("Migration: added field_side column to tries table")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
+    except psycopg2.errors.DuplicateColumn:
+        conn.rollback()  # must rollback the failed transaction in PostgreSQL
 
-    conn.executescript("""
+    # Interchanges table
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS interchanges (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             match_id INTEGER NOT NULL,
             side TEXT NOT NULL,
             player_on TEXT NOT NULL,
@@ -97,15 +193,18 @@ def init_db():
             jersey_off INTEGER,
             game_seconds INTEGER,
             FOREIGN KEY (match_id) REFERENCES matches(id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tries_field_side ON tries(field_side);
-        CREATE INDEX IF NOT EXISTS idx_interchanges_match ON interchanges(match_id);
+        )
     """)
 
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_field_side ON tries(field_side)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_interchanges_match ON interchanges(match_id)")
+
+    conn.commit()
+
     # Predictions tracking table
-    conn.executescript("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             match_url TEXT NOT NULL,
             season INTEGER NOT NULL,
             round_number INTEGER NOT NULL,
@@ -126,22 +225,25 @@ def init_db():
             multi_json TEXT,
             multi_hits INTEGER,
             multi_all_scored INTEGER,
-            recorded_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(match_url, model_version)
-        );
-        CREATE INDEX IF NOT EXISTS idx_predictions_season ON predictions(season, round_number);
-        CREATE INDEX IF NOT EXISTS idx_predictions_version ON predictions(model_version);
+        )
     """)
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_season ON predictions(season, round_number)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_version ON predictions(model_version)")
+
+    conn.commit()
 
     # Venue/weather columns on matches table
     for col, default in [("venue_city", "''"), ("weather", "''"), ("ground_conditions", "''")]:
         try:
             conn.execute(f"ALTER TABLE matches ADD COLUMN {col} TEXT DEFAULT {default}")
+            conn.commit()
             logger.info(f"Migration: added {col} column to matches table")
-        except sqlite3.OperationalError:
-            pass
+        except psycopg2.errors.DuplicateColumn:
+            conn.rollback()
 
-    conn.commit()
     conn.close()
     logger.info("Database initialised")
 
@@ -149,7 +251,7 @@ def init_db():
 def is_round_scraped(season: int, round_number: int) -> bool:
     conn = get_db()
     row = conn.execute(
-        "SELECT completed FROM scrape_progress WHERE season=? AND round_number=?",
+        "SELECT completed FROM scrape_progress WHERE season=%s AND round_number=%s",
         (season, round_number)
     ).fetchone()
     conn.close()
@@ -168,7 +270,8 @@ def reset_scrape_progress():
 def mark_round_scraped(season: int, round_number: int):
     conn = get_db()
     conn.execute(
-        "INSERT OR REPLACE INTO scrape_progress (season, round_number, completed) VALUES (?, ?, 1)",
+        """INSERT INTO scrape_progress (season, round_number, completed) VALUES (%s, %s, 1)
+           ON CONFLICT (season, round_number) DO UPDATE SET completed = 1""",
         (season, round_number)
     )
     conn.commit()
@@ -181,19 +284,22 @@ def insert_match(season, round_number, round_title, match_url, match_state,
     conn = get_db()
     try:
         cur = conn.execute(
-            """INSERT OR IGNORE INTO matches
+            """INSERT INTO matches
                (season, round_number, round_title, match_url, match_state,
                 home_team, away_team, home_score, away_score, venue, kickoff, venue_city)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT DO NOTHING
+               RETURNING id""",
             (season, round_number, round_title, match_url, match_state,
              home_team, away_team, home_score, away_score, venue, kickoff, venue_city)
         )
+        row = cur.fetchone()
         conn.commit()
-        if cur.lastrowid:
-            return cur.lastrowid
+        if row:
+            return row["id"]
         # If ignored (duplicate), fetch existing ID
         row = conn.execute(
-            "SELECT id FROM matches WHERE match_url=?", (match_url,)
+            "SELECT id FROM matches WHERE match_url=%s", (match_url,)
         ).fetchone()
         return row["id"] if row else 0
     finally:
@@ -204,7 +310,7 @@ def insert_player(match_id, team, side, name, jersey_number, position, is_interc
     conn = get_db()
     conn.execute(
         """INSERT INTO players (match_id, team, side, name, jersey_number, position, is_interchange)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
         (match_id, team, side, name, jersey_number, position, int(is_interchange))
     )
     conn.commit()
@@ -215,7 +321,7 @@ def insert_try(match_id, team, side, player_name, minute):
     conn = get_db()
     conn.execute(
         """INSERT INTO tries (match_id, team, side, player_name, minute)
-           VALUES (?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s)""",
         (match_id, team, side, player_name, minute)
     )
     conn.commit()
@@ -228,20 +334,20 @@ def bulk_insert_match_data(match_id, players_data, tries_data, interchanges_data
     conn = get_db()
     try:
         # Clear any existing data for this match (safe for re-scrapes)
-        conn.execute("DELETE FROM players WHERE match_id=?", (match_id,))
-        conn.execute("DELETE FROM tries WHERE match_id=?", (match_id,))
-        conn.execute("DELETE FROM interchanges WHERE match_id=?", (match_id,))
+        conn.execute("DELETE FROM players WHERE match_id=%s", (match_id,))
+        conn.execute("DELETE FROM tries WHERE match_id=%s", (match_id,))
+        conn.execute("DELETE FROM interchanges WHERE match_id=%s", (match_id,))
         for p in players_data:
             conn.execute(
                 """INSERT INTO players (match_id, team, side, name, jersey_number, position, is_interchange)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                 (match_id, p["team"], p["side"], p["name"], p["jersey_number"],
                  p["position"], int(p["is_interchange"]))
             )
         for t in tries_data:
             conn.execute(
                 """INSERT INTO tries (match_id, team, side, player_name, minute, field_side)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
                 (match_id, t["team"], t["side"], t["player_name"], t["minute"],
                  t.get("field_side", ""))
             )
@@ -250,7 +356,7 @@ def bulk_insert_match_data(match_id, players_data, tries_data, interchanges_data
                 conn.execute(
                     """INSERT INTO interchanges
                        (match_id, side, player_on, player_off, jersey_on, jersey_off, game_seconds)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
                     (match_id, ic["side"], ic["player_on"], ic["player_off"],
                      ic.get("jersey_on", 0), ic.get("jersey_off", 0), ic.get("game_seconds", 0))
                 )
@@ -267,7 +373,7 @@ def _temporal_filter(alias="m", before_season=None, before_round=None):
     if before_season is None:
         return "", []
     return (
-        f" AND ({alias}.season < ? OR ({alias}.season = ? AND {alias}.round_number < ?))",
+        f" AND ({alias}.season < %s OR ({alias}.season = %s AND {alias}.round_number < %s))",
         [before_season, before_season, before_round or 1],
     )
 
@@ -284,7 +390,7 @@ def get_player_try_history(player_name: str, before_season=None, before_round=No
                 WHERE t.match_id = m.id AND t.player_name = p.name AND t.side = p.side) as tries_scored
         FROM players p
         JOIN matches m ON p.match_id = m.id
-        WHERE p.name = ? AND m.match_state = 'FullTime'{tf}
+        WHERE p.name = %s AND m.match_state = 'FullTime'{tf}
         ORDER BY m.season, m.round_number
     """, (player_name, *tp)).fetchall()
     conn.close()
@@ -335,11 +441,11 @@ def get_team_attack_defence(team_name: str, last_n_games: int = 10, before_seaso
     rows = conn.execute(f"""
         SELECT home_team, away_team, home_score, away_score
         FROM matches
-        WHERE (home_team = ? OR away_team = ?)
+        WHERE (home_team = %s OR away_team = %s)
           AND match_state = 'FullTime'
           AND home_score IS NOT NULL{tf}
         ORDER BY season DESC, round_number DESC
-        LIMIT ?
+        LIMIT %s
     """, (team_name, team_name, *tp, last_n_games)).fetchall()
     conn.close()
 
@@ -399,7 +505,7 @@ def get_h2h_record(team_a: str, team_b: str, before_season=None, before_round=No
     rows = conn.execute(f"""
         SELECT home_team, away_team, home_score, away_score
         FROM matches
-        WHERE ((home_team = ? AND away_team = ?) OR (home_team = ? AND away_team = ?))
+        WHERE ((home_team = %s AND away_team = %s) OR (home_team = %s AND away_team = %s))
           AND match_state = 'FullTime'
           AND home_score IS NOT NULL{tf}
         ORDER BY season DESC, round_number DESC
@@ -432,14 +538,14 @@ def get_home_away_win_rate(team_name: str, before_season=None, before_round=None
         SELECT COUNT(*) as played,
                SUM(CASE WHEN home_score > away_score THEN 1 ELSE 0 END) as wins
         FROM matches
-        WHERE home_team = ? AND match_state = 'FullTime' AND home_score IS NOT NULL{tf}
+        WHERE home_team = %s AND match_state = 'FullTime' AND home_score IS NOT NULL{tf}
     """, (team_name, *tp)).fetchone()
 
     away_rows = conn.execute(f"""
         SELECT COUNT(*) as played,
                SUM(CASE WHEN away_score > home_score THEN 1 ELSE 0 END) as wins
         FROM matches
-        WHERE away_team = ? AND match_state = 'FullTime' AND away_score IS NOT NULL{tf}
+        WHERE away_team = %s AND match_state = 'FullTime' AND away_score IS NOT NULL{tf}
     """, (team_name, *tp)).fetchone()
 
     conn.close()
@@ -467,10 +573,10 @@ def get_team_tries_conceded_by_position(team_name: str, last_n_games: int = 15, 
     match_rows = conn.execute(f"""
         SELECT id, home_team, away_team
         FROM matches
-        WHERE (home_team = ? OR away_team = ?)
+        WHERE (home_team = %s OR away_team = %s)
           AND match_state = 'FullTime'{tf}
         ORDER BY season DESC, round_number DESC
-        LIMIT ?
+        LIMIT %s
     """, (team_name, team_name, *tp, last_n_games)).fetchall()
 
     if not match_rows:
@@ -479,11 +585,8 @@ def get_team_tries_conceded_by_position(team_name: str, last_n_games: int = 15, 
 
     match_ids = [r["id"] for r in match_rows]
     games = len(match_ids)
-    placeholders = ",".join("?" * len(match_ids))
 
     # For each match, the "opposing" side scored the tries against this team
-    # If team is home, tries scored by "away" side are conceded
-    # If team is away, tries scored by "home" side are conceded
     conceded_tries = []
     for mr in match_rows:
         conceding_side = "away" if mr["home_team"] == team_name else "home"
@@ -492,7 +595,7 @@ def get_team_tries_conceded_by_position(team_name: str, last_n_games: int = 15, 
             SELECT t.player_name, p.position
             FROM tries t
             LEFT JOIN players p ON p.match_id = t.match_id AND p.name = t.player_name AND p.side = t.side
-            WHERE t.match_id = ? AND t.side = ?
+            WHERE t.match_id = %s AND t.side = %s
         """, (mr["id"], scoring_side)).fetchall()
         for t in tries:
             pos = t["position"] or "Unknown"
@@ -539,10 +642,10 @@ def get_team_tries_conceded_by_edge(team_name: str, last_n_games: int = 15, befo
     match_rows = conn.execute(f"""
         SELECT id, home_team, away_team
         FROM matches
-        WHERE (home_team = ? OR away_team = ?)
+        WHERE (home_team = %s OR away_team = %s)
           AND match_state = 'FullTime'{tf}
         ORDER BY season DESC, round_number DESC
-        LIMIT ?
+        LIMIT %s
     """, (team_name, team_name, *tp, last_n_games)).fetchall()
 
     if not match_rows:
@@ -556,7 +659,7 @@ def get_team_tries_conceded_by_edge(team_name: str, last_n_games: int = 15, befo
         scoring_side = "away" if mr["home_team"] == team_name else "home"
         tries = conn.execute("""
             SELECT field_side FROM tries
-            WHERE match_id = ? AND side = ? AND field_side != ''
+            WHERE match_id = %s AND side = %s AND field_side != ''
         """, (mr["id"], scoring_side)).fetchall()
         for t in tries:
             fs = t["field_side"]
@@ -613,9 +716,9 @@ def get_player_recent_form(player_name: str, last_n_games: int = 5, before_seaso
                 WHERE t.match_id = m.id AND t.player_name = p.name AND t.side = p.side) as tries_scored
         FROM players p
         JOIN matches m ON p.match_id = m.id
-        WHERE p.name = ? AND m.match_state = 'FullTime'{tf}
+        WHERE p.name = %s AND m.match_state = 'FullTime'{tf}
         ORDER BY m.season DESC, m.round_number DESC
-        LIMIT ?
+        LIMIT %s
     """, (player_name, *tp, last_n_games)).fetchall()
     conn.close()
 
@@ -653,7 +756,7 @@ def get_player_game_log(player_name: str) -> list:
                m.home_score, m.away_score, m.venue, m.kickoff, m.match_url
         FROM players p
         JOIN matches m ON p.match_id = m.id
-        WHERE p.name = ? AND m.match_state = 'FullTime'
+        WHERE p.name = %s AND m.match_state = 'FullTime'
         ORDER BY m.season DESC, m.round_number DESC
     """, (player_name,)).fetchall()
 
@@ -664,7 +767,7 @@ def get_player_game_log(player_name: str) -> list:
         # Get tries this player scored in this match
         tries = conn.execute("""
             SELECT minute FROM tries
-            WHERE match_id = ? AND player_name = ? AND side = ?
+            WHERE match_id = %s AND player_name = %s AND side = %s
         """, (match_id, player_name, side)).fetchall()
 
         opponent = r["away_team"] if r["home_team"] == r["team"] else r["home_team"]
@@ -697,7 +800,7 @@ def unmark_round(season: int, round_number: int):
     """Mark a round as not scraped so it gets re-scraped."""
     conn = get_db()
     conn.execute(
-        "DELETE FROM scrape_progress WHERE season=? AND round_number=?",
+        "DELETE FROM scrape_progress WHERE season=%s AND round_number=%s",
         (season, round_number)
     )
     conn.commit()
@@ -707,12 +810,13 @@ def unmark_round(season: int, round_number: int):
 def delete_match_data(match_url: str):
     """Delete a match and its associated players/tries so it can be re-inserted."""
     conn = get_db()
-    row = conn.execute("SELECT id FROM matches WHERE match_url=?", (match_url,)).fetchone()
+    row = conn.execute("SELECT id FROM matches WHERE match_url=%s", (match_url,)).fetchone()
     if row:
         mid = row["id"]
-        conn.execute("DELETE FROM tries WHERE match_id=?", (mid,))
-        conn.execute("DELETE FROM players WHERE match_id=?", (mid,))
-        conn.execute("DELETE FROM matches WHERE id=?", (mid,))
+        conn.execute("DELETE FROM tries WHERE match_id=%s", (mid,))
+        conn.execute("DELETE FROM players WHERE match_id=%s", (mid,))
+        conn.execute("DELETE FROM interchanges WHERE match_id=%s", (mid,))
+        conn.execute("DELETE FROM matches WHERE id=%s", (mid,))
         conn.commit()
     conn.close()
 
@@ -725,7 +829,7 @@ def get_incomplete_match_urls_for_round(season: int, round_number: int) -> list:
     conn = get_db()
     rows = conn.execute("""
         SELECT match_url FROM matches
-        WHERE season=? AND round_number=?
+        WHERE season=%s AND round_number=%s
     """, (season, round_number)).fetchall()
     conn.close()
     return [r["match_url"] for r in rows]
@@ -750,7 +854,7 @@ def get_team_scoring_breakdown(team_name: str, last_n_games: int = 10, before_se
     Get a team's scoring breakdown: tries scored, tries conceded,
     and kicking points (conversions + penalties + field goals) per game.
 
-    Derives kicking points from: total_score - (tries × 4).
+    Derives kicking points from: total_score - (tries x 4).
     """
     tf, tp = _temporal_filter("matches", before_season, before_round)
     conn = get_db()
@@ -758,11 +862,11 @@ def get_team_scoring_breakdown(team_name: str, last_n_games: int = 10, before_se
     match_rows = conn.execute(f"""
         SELECT id, home_team, away_team, home_score, away_score
         FROM matches
-        WHERE (home_team = ? OR away_team = ?)
+        WHERE (home_team = %s OR away_team = %s)
           AND match_state = 'FullTime'
           AND home_score IS NOT NULL{tf}
         ORDER BY season DESC, round_number DESC
-        LIMIT ?
+        LIMIT %s
     """, (team_name, team_name, *tp, last_n_games)).fetchall()
 
     if not match_rows:
@@ -793,12 +897,12 @@ def get_team_scoring_breakdown(team_name: str, last_n_games: int = 10, before_se
         opp_score = mr["away_score"] if is_home else mr["home_score"]
 
         tries_for = conn.execute(
-            "SELECT COUNT(*) as cnt FROM tries WHERE match_id = ? AND side = ?",
+            "SELECT COUNT(*) as cnt FROM tries WHERE match_id = %s AND side = %s",
             (mr["id"], scoring_side)
         ).fetchone()["cnt"]
 
         tries_against = conn.execute(
-            "SELECT COUNT(*) as cnt FROM tries WHERE match_id = ? AND side = ?",
+            "SELECT COUNT(*) as cnt FROM tries WHERE match_id = %s AND side = %s",
             (mr["id"], conceding_side)
         ).fetchone()["cnt"]
 
@@ -819,8 +923,6 @@ def get_team_scoring_breakdown(team_name: str, last_n_games: int = 10, before_se
     conn.close()
 
     # Conversion rate estimate: kick_pts / (tries * 2) — capped at 1.0
-    # This slightly overestimates because it includes penalty goals,
-    # but penalties are a small fraction of kick points
     total_max_conv = total_tries_scored * 2 if total_tries_scored > 0 else 1
     conv_rate = min(total_kick_pts_scored / total_max_conv, 1.0)
 
@@ -854,7 +956,7 @@ def get_unrecorded_completed_matches(model_version: int = 2) -> list:
           AND m.season = 2026
           AND NOT EXISTS (
               SELECT 1 FROM predictions p
-              WHERE p.match_url = m.match_url AND p.model_version = ?
+              WHERE p.match_url = m.match_url AND p.model_version = %s
           )
         ORDER BY m.season, m.round_number
     """, (model_version,)).fetchall()
@@ -879,18 +981,18 @@ def upsert_prediction(match_url: str, season: int, round_number: int, model_vers
              actual_winner, actual_home_score, actual_away_score, win_correct,
              top3_home_json, top3_away_json, top3_hits,
              multi_json, multi_hits, multi_all_scored)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(match_url, model_version) DO UPDATE SET
-            actual_winner=excluded.actual_winner,
-            actual_home_score=excluded.actual_home_score,
-            actual_away_score=excluded.actual_away_score,
-            win_correct=excluded.win_correct,
-            top3_home_json=excluded.top3_home_json,
-            top3_away_json=excluded.top3_away_json,
-            top3_hits=excluded.top3_hits,
-            multi_json=excluded.multi_json,
-            multi_hits=excluded.multi_hits,
-            multi_all_scored=excluded.multi_all_scored
+            actual_winner=EXCLUDED.actual_winner,
+            actual_home_score=EXCLUDED.actual_home_score,
+            actual_away_score=EXCLUDED.actual_away_score,
+            win_correct=EXCLUDED.win_correct,
+            top3_home_json=EXCLUDED.top3_home_json,
+            top3_away_json=EXCLUDED.top3_away_json,
+            top3_hits=EXCLUDED.top3_hits,
+            multi_json=EXCLUDED.multi_json,
+            multi_hits=EXCLUDED.multi_hits,
+            multi_all_scored=EXCLUDED.multi_all_scored
     """, (match_url, season, round_number, model_version, home_team, away_team,
           predicted_winner, home_win_prob, predicted_home_score, predicted_away_score,
           actual_winner, actual_home_score, actual_away_score, win_correct,
@@ -906,10 +1008,10 @@ def get_accuracy_stats(model_version: int = None, season: int = None) -> dict:
     where = "WHERE actual_winner IS NOT NULL"
     params = []
     if model_version is not None:
-        where += " AND model_version = ?"
+        where += " AND model_version = %s"
         params.append(model_version)
     if season is not None:
-        where += " AND season = ?"
+        where += " AND season = %s"
         params.append(season)
 
     # Overall win prediction accuracy
@@ -961,7 +1063,7 @@ def get_accuracy_stats(model_version: int = None, season: int = None) -> dict:
                SUM(multi_hits) as multi_hits,
                SUM(CASE WHEN multi_all_scored = 1 THEN 1 ELSE 0 END) as multi_all_hit
         FROM predictions WHERE actual_winner IS NOT NULL
-        {"AND season = ?" if season is not None else ""}
+        {"AND season = %s" if season is not None else ""}
         GROUP BY model_version ORDER BY model_version
     """, [season] if season is not None else []).fetchall()
 
@@ -1001,7 +1103,7 @@ def get_venue_stats(venue_name: str, team_name: str = None) -> dict:
         rows = conn.execute("""
             SELECT home_team, away_team, home_score, away_score
             FROM matches
-            WHERE venue = ? AND (home_team = ? OR away_team = ?)
+            WHERE venue = %s AND (home_team = %s OR away_team = %s)
               AND match_state = 'FullTime' AND home_score IS NOT NULL
             ORDER BY season DESC, round_number DESC
         """, (venue_name, team_name, team_name)).fetchall()
@@ -1009,7 +1111,7 @@ def get_venue_stats(venue_name: str, team_name: str = None) -> dict:
         rows = conn.execute("""
             SELECT home_team, away_team, home_score, away_score
             FROM matches
-            WHERE venue = ? AND match_state = 'FullTime' AND home_score IS NOT NULL
+            WHERE venue = %s AND match_state = 'FullTime' AND home_score IS NOT NULL
             ORDER BY season DESC, round_number DESC
         """, (venue_name,)).fetchall()
 
@@ -1126,10 +1228,10 @@ def search_players(query: str, limit: int = 20) -> list:
                (SELECT COUNT(*) FROM tries t WHERE t.player_name = p.name) as total_tries
         FROM players p
         JOIN matches m ON p.match_id = m.id
-        WHERE p.name LIKE ? AND m.match_state = 'FullTime'
-        GROUP BY p.name
+        WHERE p.name LIKE %s AND m.match_state = 'FullTime'
+        GROUP BY p.name, p.team, p.position, p.jersey_number
         ORDER BY latest_round DESC
-        LIMIT ?
+        LIMIT %s
     """, (f"%{query}%", limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -1140,10 +1242,10 @@ def search_teams(query: str) -> list:
     conn = get_db()
     rows = conn.execute("""
         SELECT DISTINCT home_team as name FROM matches
-        WHERE home_team LIKE ?
+        WHERE home_team LIKE %s
         UNION
         SELECT DISTINCT away_team as name FROM matches
-        WHERE away_team LIKE ?
+        WHERE away_team LIKE %s
         ORDER BY name
     """, (f"%{query}%", f"%{query}%")).fetchall()
     conn.close()
@@ -1172,23 +1274,23 @@ def get_team_roster(team_name: str, season: int = None) -> list:
                    COUNT(DISTINCT m.id) as games,
                    (SELECT COUNT(*) FROM tries t
                     JOIN matches m2 ON t.match_id = m2.id
-                    WHERE t.player_name = p.name AND t.team = ?
-                      AND m2.season = ?) as tries
+                    WHERE t.player_name = p.name AND t.team = %s
+                      AND m2.season = %s) as tries
             FROM players p
             JOIN matches m ON p.match_id = m.id
-            WHERE p.team = ? AND m.season = ? AND m.match_state = 'FullTime'
-            GROUP BY p.name
+            WHERE p.team = %s AND m.season = %s AND m.match_state = 'FullTime'
+            GROUP BY p.name, p.position, p.jersey_number
             ORDER BY MIN(p.jersey_number), p.name
         """, (team_name, season, team_name, season)).fetchall()
     else:
         rows = conn.execute("""
             SELECT p.name, p.position, p.jersey_number,
                    COUNT(DISTINCT m.id) as games,
-                   (SELECT COUNT(*) FROM tries t WHERE t.player_name = p.name AND t.team = ?) as tries
+                   (SELECT COUNT(*) FROM tries t WHERE t.player_name = p.name AND t.team = %s) as tries
             FROM players p
             JOIN matches m ON p.match_id = m.id
-            WHERE p.team = ? AND m.match_state = 'FullTime'
-            GROUP BY p.name
+            WHERE p.team = %s AND m.match_state = 'FullTime'
+            GROUP BY p.name, p.position, p.jersey_number
             ORDER BY MIN(p.jersey_number), p.name
         """, (team_name, team_name)).fetchall()
     conn.close()
@@ -1201,10 +1303,10 @@ def get_team_recent_results(team_name: str, last_n: int = 10) -> list:
     rows = conn.execute("""
         SELECT season, round_number, home_team, away_team, home_score, away_score, venue
         FROM matches
-        WHERE (home_team = ? OR away_team = ?) AND match_state = 'FullTime'
+        WHERE (home_team = %s OR away_team = %s) AND match_state = 'FullTime'
           AND home_score IS NOT NULL
         ORDER BY season DESC, round_number DESC
-        LIMIT ?
+        LIMIT %s
     """, (team_name, team_name, last_n)).fetchall()
     conn.close()
 

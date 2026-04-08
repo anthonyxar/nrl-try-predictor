@@ -305,7 +305,7 @@ async def scrape_match_detail(client: httpx.AsyncClient, match_id: int,
         from database import get_db as _get_db
         _conn = _get_db()
         _conn.execute(
-            "UPDATE matches SET weather=?, ground_conditions=? WHERE id=?",
+            "UPDATE matches SET weather=%s, ground_conditions=%s WHERE id=%s",
             (weather or "", ground_conditions or "", match_id)
         )
         _conn.commit()
