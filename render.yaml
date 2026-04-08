@@ -8,10 +8,6 @@ services:
     envVars:
       - key: ODDS_API_KEY
         sync: false
-    disk:
-      name: nrl-data
-      mountPath: /app/data
-      sizeGB: 1
 
   - type: web
     name: nrl-try-predictor-frontend
