@@ -45,8 +45,11 @@ SYNC_INTERVAL_HOURS = 6
 
 
 @asynccontextmanager
+scrape_complete = False
+
 async def lifespan(app: FastAPI):
     """Run historical data scrape on startup, then sync periodically."""
+    global scrape_complete
     init_db()
     existing = get_total_match_count()
     logger.info(f"Starting up. DB has {existing} matches.")
@@ -74,10 +77,12 @@ async def lifespan(app: FastAPI):
 
 async def _run_scraper_bg():
     """Background scraper task — runs once at startup."""
+    global scrape_complete
     try:
         logger.info("Starting background historical data scrape...")
         await scrape_all()
         invalidate_cache()
+        scrape_complete = True
         count = get_total_match_count()
         tries = get_total_try_count()
         logger.info(f"Scrape complete: {count} matches, {tries} tries in database.")
@@ -282,12 +287,18 @@ app.add_middleware(
 )
 
 
+def _check_ready():
+    if not scrape_complete:
+        raise HTTPException(status_code=503, detail="Model is loading historical data. Please wait...")
+
+
 @app.get("/api/status")
 async def get_status():
     """Return DB status - how much historical data is loaded."""
     return {
         "matches": get_total_match_count(),
         "tries": get_total_try_count(),
+        "ready": scrape_complete,
     }
 
 
@@ -343,6 +354,7 @@ async def get_rounds():
 
 @app.get("/api/rounds/{round_number}")
 async def get_round(round_number: int, version: int = 2):
+    _check_ready()
     model_version = max(1, min(version, 2))
     if round_number < 1 or round_number > TOTAL_ROUNDS:
         raise HTTPException(status_code=404, detail="Invalid round number")
@@ -449,6 +461,7 @@ async def get_player(name: str):
 
 @app.get("/api/match")
 async def get_match_by_url(url: str, version: int = 2):
+    _check_ready()
     if not url.startswith("/draw/"):
         raise HTTPException(status_code=400, detail="Invalid match URL path")
 
