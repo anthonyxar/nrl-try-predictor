@@ -56,7 +56,7 @@ async def scrape_all():
                     logger.error(f"Error scraping {season} R{rnd}: {e}")
 
                 # Rate limiting - be respectful
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.2)
 
     final = get_total_match_count()
     logger.info(f"Scrape complete. Database now has {final} completed matches.")
