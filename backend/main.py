@@ -44,9 +44,10 @@ logger = logging.getLogger(__name__)
 SYNC_INTERVAL_HOURS = 6
 
 
-@asynccontextmanager
 scrape_complete = False
 
+
+@asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run historical data scrape on startup, then sync periodically."""
     global scrape_complete
