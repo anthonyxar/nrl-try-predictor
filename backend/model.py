@@ -1,0 +1,841 @@
+"""
+NRL Prediction Model - powered by historical data (2020-2026).
+
+1. Try scoring: position base rates from history, player-specific adjustments,
+   team attack/defence factors, home advantage.
+2. Win prediction: based on recent form, head-to-head, home advantage.
+3. Multi suggestion: best 3-player try scorer multi across both teams.
+"""
+
+import numpy as np
+import logging
+from database import (
+    get_position_try_rates,
+    get_player_try_history,
+    get_team_attack_defence,
+    get_h2h_record,
+    get_home_away_win_rate,
+    get_total_match_count,
+    get_team_tries_conceded_by_position,
+    get_team_tries_conceded_by_edge,
+    get_player_recent_form,
+    get_venue_stats,
+)
+
+logger = logging.getLogger(__name__)
+
+# Fallback rates if DB is empty or position not found
+FALLBACK_POSITION_RATES = {
+    "Fullback": 0.28,
+    "Winger": 0.35,
+    "Centre": 0.22,
+    "Five-Eighth": 0.15,
+    "Halfback": 0.12,
+    "Prop": 0.06,
+    "Hooker": 0.10,
+    "2nd Row": 0.10,
+    "Lock": 0.08,
+    "Interchange": 0.05,
+}
+
+LEAGUE_AVG_PPG = 22.0
+HOME_ADVANTAGE_WIN = 0.08  # +8% win probability at home
+HOME_ADVANTAGE_TRY = 1.06  # 6% more likely to score tries at home
+
+# Jersey number → field side (from the attacking team's perspective)
+JERSEY_FIELD_SIDE = {
+    1: "fullback",  # Fullback — own category, scores across all edges
+    2: "right",     # Right Wing
+    3: "right",     # Right Centre
+    4: "left",      # Left Centre
+    5: "left",      # Left Wing
+    6: "left",      # Five-Eighth
+    7: "right",     # Halfback
+    8: "middle",    # Prop
+    9: "middle",    # Hooker
+    10: "middle",   # Prop
+    11: "left",     # Left 2nd Row
+    12: "right",    # Right 2nd Row
+    13: "middle",   # Lock
+}
+
+# Weather keywords that indicate wet/adverse conditions
+_WET_KEYWORDS = {"rain", "rainy", "showers", "shower", "wet", "drizzle", "storm", "stormy", "thunderstorm"}
+_HEAVY_GROUND = {"heavy", "soft", "wet", "muddy"}
+
+
+def _get_weather_factor(weather: str, ground_conditions: str, position: str) -> float:
+    """Calculate a multiplier for try probability based on weather/ground."""
+    if not weather and not ground_conditions:
+        return 1.0
+
+    w_lower = (weather or "").lower()
+    g_lower = (ground_conditions or "").lower()
+
+    is_wet = any(kw in w_lower for kw in _WET_KEYWORDS)
+    is_heavy = any(kw in g_lower for kw in _HEAVY_GROUND)
+
+    if not is_wet and not is_heavy:
+        return 1.0
+
+    # Backs affected more than forwards in wet weather
+    pos_lower = (position or "").lower()
+    is_back = any(p in pos_lower for p in ("wing", "centre", "center", "full", "five", "half"))
+
+    if is_wet and is_heavy:
+        return 0.88 if is_back else 0.94
+    elif is_wet:
+        return 0.92 if is_back else 0.97
+    else:  # heavy ground only
+        return 0.94 if is_back else 0.97
+
+
+# Cache for position rates (refreshed per request batch)
+_position_rates_cache = None
+
+
+def _get_position_rates() -> dict:
+    """Get position try rates from DB, with fallback."""
+    global _position_rates_cache
+    if _position_rates_cache is not None:
+        return _position_rates_cache
+
+    db_rates = get_position_try_rates()
+    if db_rates:
+        _position_rates_cache = db_rates
+        return db_rates
+    return {}
+
+
+def _match_position(position_name: str, rates: dict) -> float:
+    """Find the best matching position rate."""
+    if not position_name:
+        return FALLBACK_POSITION_RATES.get("Interchange", 0.05)
+
+    # Exact match
+    if position_name in rates:
+        return rates[position_name]["rate"]
+
+    # Fuzzy match against DB positions
+    pos_lower = position_name.lower()
+    for db_pos, info in rates.items():
+        if db_pos.lower() == pos_lower:
+            return info["rate"]
+
+    # Fallback mapping
+    for key, fallback_rate in FALLBACK_POSITION_RATES.items():
+        if key.lower() in pos_lower or pos_lower in key.lower():
+            return fallback_rate
+
+    return FALLBACK_POSITION_RATES.get("Interchange", 0.05)
+
+
+def _get_player_try_factor(player_name: str, position: str, model_version: int = 2,
+                            before_season=None, before_round=None) -> float:
+    """
+    Calculate a player-specific try factor from their historical data.
+    V2: Blends career rate (40%) with recent 5-game form (60%).
+    V1: Uses career rate only.
+    Returns a multiplier (1.0 = average for position).
+    """
+    history = get_player_try_history(player_name, before_season, before_round)
+    if not history or len(history) < 3:
+        return 1.0  # Not enough data, assume average
+
+    # Get expected rate for their position
+    rates = _get_position_rates()
+    expected_rate = _match_position(position, rates)
+    if expected_rate <= 0:
+        return 1.0
+
+    # Career rate
+    total_games = len(history)
+    total_tries = sum(h["tries_scored"] for h in history)
+    career_rate = total_tries / total_games if total_games > 0 else 0
+
+    if model_version >= 2:
+        # Recent form (last 5 games) — history is ordered oldest-first
+        recent = history[-5:]
+        recent_games = len(recent)
+        recent_tries = sum(h["tries_scored"] for h in recent)
+        recent_rate = recent_tries / recent_games if recent_games > 0 else 0
+
+        # Blend: 60% recent, 40% career (if enough recent games)
+        if recent_games >= 3:
+            blended_rate = recent_rate * 0.6 + career_rate * 0.4
+        else:
+            blended_rate = career_rate
+    else:
+        blended_rate = career_rate
+
+    factor = blended_rate / expected_rate
+    # Clamp between 0.4 and 2.5 to avoid extreme outliers
+    return max(0.4, min(factor, 2.5))
+
+
+def predict_try_probability(
+    player: dict,
+    team_name: str,
+    opp_name: str,
+    is_home: bool,
+    team_attack: dict,
+    opp_defence: dict,
+    opp_edge_vulnerability: dict = None,
+    model_version: int = 2,
+    before_season=None,
+    before_round=None,
+    weather: str = "",
+    ground_conditions: str = "",
+) -> float:
+    """Calculate probability a player scores at least one try."""
+    position = player.get("position", "Interchange")
+    is_bench = player.get("is_interchange", False) or player.get("number", 0) >= 14
+    jersey = player.get("number", 0)
+
+    # Base rate from historical data
+    rates = _get_position_rates()
+    base_rate = _match_position(position, rates)
+
+    # Player-specific factor from their own history
+    player_factor = _get_player_try_factor(player["name"], position, model_version,
+                                            before_season, before_round)
+    rate = base_rate * player_factor
+
+    if model_version >= 2:
+        # V2: Team attack factor — blend last-10 (40%) with last-5 (60%)
+        team_avg_scored_10 = team_attack.get("avg_scored", LEAGUE_AVG_PPG)
+        team_avg_scored_5 = team_attack.get("avg_scored_recent", team_avg_scored_10)
+        team_avg_scored = team_avg_scored_5 * 0.6 + team_avg_scored_10 * 0.4
+    else:
+        # V1: Last-10 only
+        team_avg_scored = team_attack.get("avg_scored", LEAGUE_AVG_PPG)
+    attack_factor = team_avg_scored / LEAGUE_AVG_PPG
+    attack_factor = max(0.6, min(attack_factor, 1.8))
+    rate *= attack_factor
+
+    if model_version >= 2:
+        # V2: Opponent defence factor — blend last-10 (40%) with last-5 (60%)
+        opp_avg_conceded_10 = opp_defence.get("avg_conceded", LEAGUE_AVG_PPG)
+        opp_avg_conceded_5 = opp_defence.get("avg_conceded_recent", opp_avg_conceded_10)
+        opp_avg_conceded = opp_avg_conceded_5 * 0.6 + opp_avg_conceded_10 * 0.4
+    else:
+        # V1: Last-10 only
+        opp_avg_conceded = opp_defence.get("avg_conceded", LEAGUE_AVG_PPG)
+    defence_factor = opp_avg_conceded / LEAGUE_AVG_PPG
+    defence_factor = max(0.6, min(defence_factor, 1.8))
+    rate *= defence_factor
+
+    # Edge vulnerability factor — V2 only
+    if model_version >= 2 and opp_edge_vulnerability and 1 <= jersey <= 13:
+        player_edge = JERSEY_FIELD_SIDE.get(jersey, "middle")
+        edge_info = opp_edge_vulnerability.get(player_edge, {})
+        edge_vuln = edge_info.get("vulnerability", 1.0)
+        if edge_vuln != 1.0:
+            edge_factor = 1.0 + (edge_vuln - 1.0) * 0.3
+            edge_factor = max(0.85, min(edge_factor, 1.20))
+            rate *= edge_factor
+
+    # Home advantage
+    if is_home:
+        rate *= HOME_ADVANTAGE_TRY
+
+    # Weather factor — V2 only, wet conditions reduce try scoring
+    if model_version >= 2:
+        weather_factor = _get_weather_factor(weather, ground_conditions, position)
+        rate *= weather_factor
+
+    # Bench minute reduction
+    if is_bench and position in ("Interchange", "", "Reserve"):
+        rate *= 0.40
+
+    # Deterministic noise for variety
+    seed = sum(ord(c) for c in player.get("name", "")) % 1000
+    rng = np.random.RandomState(seed)
+    noise = rng.normal(1.0, 0.04)
+    rate *= max(noise, 0.6)
+
+    return round(min(max(rate, 0.01), 0.60), 3)
+
+
+def predict_win_probability(
+    home_team: str,
+    away_team: str,
+    home_stats: dict,
+    away_stats: dict,
+    model_version: int = 2,
+    before_season=None,
+    before_round=None,
+    venue: str = "",
+    weather: str = "",
+    ground_conditions: str = "",
+) -> dict:
+    """
+    Predict win probability for each team.
+
+    V2 factors (recency-weighted — last 5 games carry more weight):
+    1. Last 5 games form (30%) 2. Last 10 games form (20%)
+    3. Points diff last 5 (15%) 4. H2H (10%) 5. Venue (15%) 6. Season (10%)
+
+    V1 factors (equal-weighted, last-10 only):
+    1. Last 10 form (30%) 2. H2H (25%) 3. Venue (25%) 4. Season (20%)
+    """
+    # Recent form from DB
+    home_form = get_team_attack_defence(home_team, last_n_games=10,
+                                         before_season=before_season, before_round=before_round)
+    away_form = get_team_attack_defence(away_team, last_n_games=10,
+                                         before_season=before_season, before_round=before_round)
+
+    # H2H
+    h2h = get_h2h_record(home_team, away_team, before_season=before_season, before_round=before_round)
+
+    # Home/away rates
+    home_ha = get_home_away_win_rate(home_team, before_season=before_season, before_round=before_round)
+    away_ha = get_home_away_win_rate(away_team, before_season=before_season, before_round=before_round)
+
+    # Last-10 win rate
+    home_recent10_wr = home_form["wins"] / home_form["played"] if home_form["played"] > 0 else 0.5
+    away_recent10_wr = away_form["wins"] / away_form["played"] if away_form["played"] > 0 else 0.5
+
+    # H2H
+    if h2h["played"] > 0:
+        home_h2h = h2h["team_a_wins"] / h2h["played"]
+        away_h2h = h2h["team_b_wins"] / h2h["played"]
+    else:
+        home_h2h = 0.5
+        away_h2h = 0.5
+
+    # Venue factors
+    home_venue_factor = home_ha["home_win_rate"]
+    away_venue_factor = away_ha["away_win_rate"]
+
+    # Season stats
+    home_season_wr = home_stats.get("wins", 0) / home_stats.get("played", 1) if home_stats.get("played", 0) > 0 else 0.5
+    away_season_wr = away_stats.get("wins", 0) / away_stats.get("played", 1) if away_stats.get("played", 0) > 0 else 0.5
+
+    if model_version >= 2:
+        # V2: recency-weighted composite
+        recent_n = min(5, home_form["played"])
+        home_recent5_wr = home_form["wins_recent"] / recent_n if recent_n > 0 else 0.5
+        recent_n = min(5, away_form["played"])
+        away_recent5_wr = away_form["wins_recent"] / recent_n if recent_n > 0 else 0.5
+
+        home_ppg_diff = (home_form["avg_scored_recent"] - home_form["avg_conceded_recent"]) / LEAGUE_AVG_PPG
+        away_ppg_diff = (away_form["avg_scored_recent"] - away_form["avg_conceded_recent"]) / LEAGUE_AVG_PPG
+        home_diff_factor = max(0.1, min(0.5 + home_ppg_diff * 0.15, 0.9))
+        away_diff_factor = max(0.1, min(0.5 + away_ppg_diff * 0.15, 0.9))
+
+        home_raw = (
+            home_recent5_wr * 0.30 +
+            home_recent10_wr * 0.20 +
+            home_diff_factor * 0.15 +
+            home_h2h * 0.10 +
+            home_venue_factor * 0.15 +
+            home_season_wr * 0.10
+        )
+        away_raw = (
+            away_recent5_wr * 0.30 +
+            away_recent10_wr * 0.20 +
+            away_diff_factor * 0.15 +
+            away_h2h * 0.10 +
+            away_venue_factor * 0.15 +
+            away_season_wr * 0.10
+        )
+        display_home_form = round(home_recent5_wr, 3)
+        display_away_form = round(away_recent5_wr, 3)
+    else:
+        # V1: equal-weighted, last-10 only
+        home_raw = (
+            home_recent10_wr * 0.30 +
+            home_h2h * 0.25 +
+            home_venue_factor * 0.25 +
+            home_season_wr * 0.20
+        )
+        away_raw = (
+            away_recent10_wr * 0.30 +
+            away_h2h * 0.25 +
+            away_venue_factor * 0.25 +
+            away_season_wr * 0.20
+        )
+        display_home_form = round(home_recent10_wr, 3)
+        display_away_form = round(away_recent10_wr, 3)
+
+    # Home advantage boost
+    if model_version >= 2 and venue:
+        # V2: Venue-specific home advantage
+        venue_data = get_venue_stats(venue, home_team)
+        if venue_data.get("team_games", 0) >= 5:
+            venue_wr = venue_data["team_win_rate"]
+            venue_advantage = (venue_wr - 0.5) * 0.3
+            home_raw += max(0.02, min(venue_advantage, 0.15))
+        else:
+            home_raw += HOME_ADVANTAGE_WIN
+    else:
+        # V1: Flat home advantage
+        home_raw += HOME_ADVANTAGE_WIN
+
+    # Normalise to probabilities
+    total = home_raw + away_raw
+    if total <= 0:
+        home_prob = 0.5
+        away_prob = 0.5
+    else:
+        home_prob = home_raw / total
+        away_prob = away_raw / total
+
+    # Clamp
+    home_prob = max(0.10, min(home_prob, 0.90))
+    away_prob = 1 - home_prob
+
+    # --- Predicted score ---
+    if model_version >= 2:
+        home_attack_ppg = home_form["avg_scored_recent"] * 0.6 + home_form["avg_scored"] * 0.4
+        away_attack_ppg = away_form["avg_scored_recent"] * 0.6 + away_form["avg_scored"] * 0.4
+        home_defence_ppg = home_form["avg_conceded_recent"] * 0.6 + home_form["avg_conceded"] * 0.4
+        away_defence_ppg = away_form["avg_conceded_recent"] * 0.6 + away_form["avg_conceded"] * 0.4
+    else:
+        home_attack_ppg = home_form["avg_scored"]
+        away_attack_ppg = away_form["avg_scored"]
+        home_defence_ppg = home_form["avg_conceded"]
+        away_defence_ppg = away_form["avg_conceded"]
+
+    home_pred_score = (home_attack_ppg * 0.5 + away_defence_ppg * 0.5) * 1.03
+    away_pred_score = (away_attack_ppg * 0.5 + home_defence_ppg * 0.5) * 0.97
+
+    home_pred_score = max(4, round(home_pred_score / 2) * 2)
+    away_pred_score = max(4, round(away_pred_score / 2) * 2)
+
+    # Weather impact on scoring — V2 only
+    w_lower = (weather or "").lower()
+    g_lower = (ground_conditions or "").lower()
+    is_wet = any(kw in w_lower for kw in _WET_KEYWORDS)
+    is_heavy = any(kw in g_lower for kw in _HEAVY_GROUND)
+    if model_version >= 2 and (is_wet or is_heavy):
+        score_reduction = 0.88 if (is_wet and is_heavy) else 0.93
+        home_pred_score = max(4, round(home_pred_score * score_reduction / 2) * 2)
+        away_pred_score = max(4, round(away_pred_score * score_reduction / 2) * 2)
+
+    # Ensure predicted winner aligns with win probability
+    if home_prob >= 0.5 and home_pred_score <= away_pred_score:
+        home_pred_score = away_pred_score + 2
+    elif away_prob > home_prob and away_pred_score <= home_pred_score:
+        away_pred_score = home_pred_score + 2
+
+    result = {
+        "home_win_prob": round(home_prob, 3),
+        "away_win_prob": round(away_prob, 3),
+        "predicted_winner": home_team if home_prob >= 0.5 else away_team,
+        "confidence": round(max(home_prob, away_prob) * 100, 1),
+        "predicted_home_score": int(home_pred_score),
+        "predicted_away_score": int(away_pred_score),
+        "factors": {
+            "home_recent_form": display_home_form,
+            "away_recent_form": display_away_form,
+            "h2h_home_wins": h2h.get("team_a_wins", 0),
+            "h2h_away_wins": h2h.get("team_b_wins", 0),
+            "h2h_played": h2h.get("played", 0),
+            "home_venue_wr": round(home_venue_factor, 3),
+            "away_venue_wr": round(away_venue_factor, 3),
+        },
+    }
+    if is_wet or is_heavy:
+        result["weather_impact"] = True
+    return result
+
+
+def generate_predictions(
+    home_players: list,
+    away_players: list,
+    home_stats: dict,
+    away_stats: dict,
+    home_team_name: str = "",
+    away_team_name: str = "",
+    model_version: int = 2,
+    before_season=None,
+    before_round=None,
+    weather: str = "",
+    ground_conditions: str = "",
+) -> dict:
+    """Generate try predictions for all players in a match."""
+    # Get team form from DB
+    home_attack = get_team_attack_defence(home_team_name, last_n_games=10,
+                                           before_season=before_season, before_round=before_round)
+    away_attack = get_team_attack_defence(away_team_name, last_n_games=10,
+                                           before_season=before_season, before_round=before_round)
+
+    # If DB is empty, fall back to current season stats from NRL API
+    if home_attack["played"] == 0:
+        home_attack["avg_scored"] = home_stats.get("avg_points_scored", LEAGUE_AVG_PPG)
+        home_attack["avg_conceded"] = home_stats.get("avg_points_conceded", LEAGUE_AVG_PPG)
+    if away_attack["played"] == 0:
+        away_attack["avg_scored"] = away_stats.get("avg_points_scored", LEAGUE_AVG_PPG)
+        away_attack["avg_conceded"] = away_stats.get("avg_points_conceded", LEAGUE_AVG_PPG)
+
+    # Get edge vulnerability data for both opponents (V2 only)
+    if model_version >= 2:
+        away_edge_vuln = get_team_tries_conceded_by_edge(away_team_name, last_n_games=15,
+                                                          before_season=before_season, before_round=before_round)
+        home_edge_vuln = get_team_tries_conceded_by_edge(home_team_name, last_n_games=15,
+                                                          before_season=before_season, before_round=before_round)
+    else:
+        away_edge_vuln = None
+        home_edge_vuln = None
+
+    def process_team(players, team_name, opp_name, is_home, team_atk, opp_atk, opp_edge):
+        results = []
+        for p in players:
+            prob = predict_try_probability(
+                p, team_name, opp_name, is_home, team_atk, opp_atk, opp_edge,
+                model_version=model_version,
+                before_season=before_season, before_round=before_round,
+                weather=weather, ground_conditions=ground_conditions,
+            )
+            jersey = p.get("number", 0)
+            field_side = JERSEY_FIELD_SIDE.get(jersey, "") if 1 <= jersey <= 13 else ""
+            results.append({
+                **p,
+                "try_probability": prob,
+                "try_percentage": round(prob * 100, 1),
+                "field_side": field_side,
+            })
+        results.sort(key=lambda x: x["try_probability"], reverse=True)
+        return results
+
+    home_preds = process_team(
+        home_players, home_team_name, away_team_name, True,
+        home_attack, away_attack, away_edge_vuln
+    )
+    away_preds = process_team(
+        away_players, away_team_name, home_team_name, False,
+        away_attack, home_attack, home_edge_vuln
+    )
+
+    return {
+        "home": home_preds,
+        "away": away_preds,
+    }
+
+
+def generate_multi_suggestion(home_predictions: list, away_predictions: list,
+                               home_nickname: str, away_nickname: str) -> list:
+    """
+    Suggest the best 3-player try scorer multi across both teams.
+    Picks the 3 players with highest try probability regardless of team.
+    Returns list of 3 picks with combined multi probability.
+    """
+    all_players = []
+    for p in home_predictions:
+        all_players.append({**p, "team": home_nickname})
+    for p in away_predictions:
+        all_players.append({**p, "team": away_nickname})
+
+    # Sort by probability descending
+    all_players.sort(key=lambda x: x["try_probability"], reverse=True)
+
+    # Pick top 3 (but try to get at least 1 from each team for diversity)
+    picks = []
+    teams_represented = set()
+
+    # First pass: top 3
+    top_candidates = all_players[:6]  # Consider top 6
+
+    # Get the absolute top 3 first
+    raw_top3 = all_players[:3]
+    raw_teams = set(p["team"] for p in raw_top3)
+
+    if len(raw_teams) >= 2:
+        # Already have both teams, use top 3
+        picks = raw_top3[:3]
+    else:
+        # All from one team - take top 2 from that team, top 1 from other
+        picks = raw_top3[:2]
+        for p in all_players:
+            if p["team"] != raw_top3[0]["team"]:
+                picks.append(p)
+                break
+        if len(picks) < 3:
+            picks = raw_top3[:3]
+
+    # Calculate combined multi probability (all 3 must score)
+    multi_prob = 1.0
+    for p in picks:
+        multi_prob *= p["try_probability"]
+
+    multi_result = []
+    for p in picks:
+        multi_result.append({
+            "name": p["name"],
+            "team": p["team"],
+            "position": p["position"],
+            "number": p.get("number", 0),
+            "try_percentage": p["try_percentage"],
+        })
+
+    return {
+        "picks": multi_result,
+        "multi_probability": round(multi_prob, 4),
+        "multi_percentage": round(multi_prob * 100, 2),
+    }
+
+
+EDGE_LABELS = {"left": "left edge", "right": "right edge", "middle": "middle", "fullback": "fullbacks"}
+
+
+def find_value_picks(predictions: list, opp_team_name: str, team_nickname: str,
+                     before_season=None, before_round=None) -> list:
+    """
+    Find value picks — players ranked lower in raw probability but who are
+    good picks based on:
+    1. The opponent concedes more tries than average to their position
+    2. The opponent is weak on the player's side of the field
+    3. The player is in recent scoring form
+
+    A value pick must:
+    - NOT already be in the top 3 (they're already highlighted)
+    - Play a position the opponent is vulnerable to (vulnerability > 1.2)
+      OR attack an edge the opponent is weak on
+    - Be in form (scored in recent games, or high recent try rate)
+    """
+    if len(predictions) <= 3:
+        return []
+
+    opp_vulnerabilities = get_team_tries_conceded_by_position(opp_team_name, last_n_games=15,
+                                                              before_season=before_season, before_round=before_round)
+    opp_edge_vuln = get_team_tries_conceded_by_edge(opp_team_name, last_n_games=15,
+                                                     before_season=before_season, before_round=before_round)
+
+    # Normalise position names for matching
+    def normalise_pos(pos):
+        if not pos:
+            return ""
+        p = pos.lower()
+        if "wing" in p:
+            return "Winger"
+        if "full" in p:
+            return "Fullback"
+        if "centre" in p or "center" in p:
+            return "Centre"
+        if "five" in p or "5/8" in p:
+            return "Five-Eighth"
+        if "half" in p:
+            return "Halfback"
+        if "prop" in p:
+            return "Prop"
+        if "hook" in p:
+            return "Hooker"
+        if "row" in p or "2nd" in p:
+            return "2nd Row"
+        if "lock" in p:
+            return "Lock"
+        return pos
+
+    value_picks = []
+    # Skip top 3, look at players ranked 4+
+    for rank, player in enumerate(predictions[3:], start=4):
+        pos = normalise_pos(player.get("position", ""))
+        if not pos or pos in ("Interchange", "Reserve", ""):
+            continue
+
+        jersey = player.get("number", 0)
+
+        # Check opponent vulnerability at this position
+        vuln = opp_vulnerabilities.get(pos, {})
+        vulnerability = vuln.get("vulnerability", 1.0)
+
+        # Check opponent edge vulnerability for this player's field side
+        player_edge = JERSEY_FIELD_SIDE.get(jersey, "") if 1 <= jersey <= 13 else ""
+        edge_info = opp_edge_vuln.get(player_edge, {}) if player_edge else {}
+        edge_vuln = edge_info.get("vulnerability", 1.0)
+
+        # Need at least one form of vulnerability
+        has_pos_vuln = vulnerability >= 1.15
+        has_edge_vuln = edge_vuln >= 1.15
+
+        if not has_pos_vuln and not has_edge_vuln:
+            continue
+
+        # Check player's recent form
+        form = get_player_recent_form(player["name"], last_n_games=5,
+                                      before_season=before_season, before_round=before_round)
+        if form["games"] == 0:
+            continue
+
+        # Value pick criteria
+        is_in_form = form["rate"] >= 0.2 or form["streak"] >= 1
+        is_high_vuln = vulnerability >= 1.3 or edge_vuln >= 1.3
+
+        if not is_in_form and not is_high_vuln:
+            continue
+
+        # Calculate a value score combining position vuln, edge vuln, and form
+        form_score = min(form["rate"] * 2, 1.0) + (form["streak"] * 0.15)
+        pos_vuln_score = (max(vulnerability, 1.0) - 1.0) * 2
+        edge_vuln_score = (max(edge_vuln, 1.0) - 1.0) * 1.5
+        value_score = form_score + pos_vuln_score + edge_vuln_score
+
+        if value_score < 0.4:
+            continue
+
+        reasons = []
+
+        # Edge vulnerability reason (field side specific)
+        if has_edge_vuln and player_edge:
+            edge_label = EDGE_LABELS.get(player_edge, player_edge)
+            reasons.append(
+                f"{opp_team_name} concede {edge_info.get('rate_per_game', 0):.1f} tries/game to {edge_label} ({edge_vuln:.1f}x league avg)"
+            )
+
+        # Position vulnerability reason
+        if has_pos_vuln:
+            if vulnerability >= 1.3:
+                reasons.append(f"{opp_team_name} concede {vuln.get('rate_per_game', 0):.1f} tries/game to {pos}s ({vulnerability:.1f}x league avg)")
+            else:
+                reasons.append(f"{opp_team_name} leak tries to {pos}s ({vulnerability:.1f}x avg)")
+
+        if form["streak"] >= 2:
+            reasons.append(f"Try-scoring streak: {form['streak']} games in a row")
+        elif form["streak"] == 1:
+            reasons.append(f"Scored last game")
+
+        if form["rate"] >= 0.4:
+            reasons.append(f"Scoring at {form['rate']:.0%} in last {form['games']} games")
+        elif form["rate"] >= 0.2:
+            reasons.append(f"{form['tries']} tries in last {form['games']} games")
+
+        value_picks.append({
+            "name": player["name"],
+            "team": team_nickname,
+            "position": player.get("position", ""),
+            "number": player.get("number", 0),
+            "try_percentage": player["try_percentage"],
+            "rank": rank,
+            "field_side": player_edge,
+            "value_score": round(value_score, 2),
+            "vulnerability": vulnerability,
+            "edge_vulnerability": edge_vuln,
+            "form": {
+                "games": form["games"],
+                "tries": form["tries"],
+                "rate": form["rate"],
+                "streak": form["streak"],
+            },
+            "reasons": reasons,
+        })
+
+    # Sort by value score and return top picks
+    value_picks.sort(key=lambda x: x["value_score"], reverse=True)
+    return value_picks[:3]
+
+
+def generate_team_summary(team_name: str, model_version: int = 2,
+                          before_season=None, before_round=None) -> dict:
+    """
+    Generate a short attack/defence summary with strengths and weaknesses.
+    Uses last-10 for V1, blended last-5/last-10 for V2.
+    """
+    form = get_team_attack_defence(team_name, last_n_games=10,
+                                    before_season=before_season, before_round=before_round)
+    edge_vuln = get_team_tries_conceded_by_edge(team_name, last_n_games=15,
+                                                 before_season=before_season, before_round=before_round)
+    ha = get_home_away_win_rate(team_name, before_season=before_season, before_round=before_round)
+
+    if form["played"] == 0:
+        return {"attack": [], "defence": [], "attack_rating": "unknown", "defence_rating": "unknown"}
+
+    # Choose stats based on model version
+    if model_version >= 2:
+        recent_n = min(5, form["played"])
+        win_rate = form["wins_recent"] / recent_n if recent_n > 0 else 0.5
+        avg_scored = form["avg_scored_recent"] * 0.6 + form["avg_scored"] * 0.4
+        avg_conceded = form["avg_conceded_recent"] * 0.6 + form["avg_conceded"] * 0.4
+        form_label = "last 5"
+    else:
+        win_rate = form["wins"] / form["played"] if form["played"] > 0 else 0.5
+        avg_scored = form["avg_scored"]
+        avg_conceded = form["avg_conceded"]
+        form_label = "last 10"
+
+    attack_points = []
+    defence_points = []
+
+    # Attack assessment
+    if avg_scored >= 28:
+        attack_points.append({"type": "strong", "text": f"Averaging {avg_scored:.0f} pts/game ({form_label}) — elite attack"})
+    elif avg_scored >= 22:
+        attack_points.append({"type": "strong", "text": f"Averaging {avg_scored:.0f} pts/game ({form_label}) — solid attack"})
+    elif avg_scored >= 16:
+        attack_points.append({"type": "weak", "text": f"Averaging {avg_scored:.0f} pts/game ({form_label}) — below average attack"})
+    else:
+        attack_points.append({"type": "weak", "text": f"Averaging {avg_scored:.0f} pts/game ({form_label}) — struggling to score"})
+
+    # Form / momentum
+    if win_rate >= 0.8:
+        attack_points.append({"type": "strong", "text": f"Hot form — {win_rate:.0%} win rate ({form_label})"})
+    elif win_rate >= 0.6:
+        attack_points.append({"type": "strong", "text": f"Winning form — {win_rate:.0%} win rate ({form_label})"})
+    elif win_rate <= 0.2:
+        attack_points.append({"type": "weak", "text": f"Poor form — {win_rate:.0%} win rate ({form_label})"})
+    elif win_rate <= 0.4:
+        attack_points.append({"type": "weak", "text": f"Struggling — {win_rate:.0%} win rate ({form_label})"})
+
+    # Home/away strength
+    if ha["home_win_rate"] >= 0.7:
+        attack_points.append({"type": "strong", "text": f"Strong at home ({ha['home_win_rate']:.0%} win rate)"})
+    elif ha["home_win_rate"] <= 0.35:
+        attack_points.append({"type": "weak", "text": f"Poor at home ({ha['home_win_rate']:.0%} win rate)"})
+
+    # Defence assessment
+    if avg_conceded <= 16:
+        defence_points.append({"type": "strong", "text": f"Conceding {avg_conceded:.0f} pts/game ({form_label}) — elite defence"})
+    elif avg_conceded <= 22:
+        defence_points.append({"type": "strong", "text": f"Conceding {avg_conceded:.0f} pts/game ({form_label}) — solid defence"})
+    elif avg_conceded <= 28:
+        defence_points.append({"type": "weak", "text": f"Conceding {avg_conceded:.0f} pts/game ({form_label}) — leaky defence"})
+    else:
+        defence_points.append({"type": "weak", "text": f"Conceding {avg_conceded:.0f} pts/game ({form_label}) — very poor defence"})
+
+    # Edge vulnerability (V2 only)
+    if model_version >= 2 and edge_vuln:
+        weak_edges = []
+        strong_edges = []
+        for edge, info in edge_vuln.items():
+            v = info.get("vulnerability", 1.0)
+            label = EDGE_LABELS.get(edge, edge)
+            if v >= 1.25:
+                weak_edges.append((label, v, info.get("rate_per_game", 0)))
+            elif v <= 0.75:
+                strong_edges.append((label, v, info.get("rate_per_game", 0)))
+
+        for label, v, rpg in sorted(weak_edges, key=lambda x: -x[1]):
+            defence_points.append({"type": "weak", "text": f"Vulnerable on {label} — {rpg:.1f} tries/game conceded ({v:.1f}x avg)"})
+        for label, v, rpg in sorted(strong_edges, key=lambda x: x[1]):
+            defence_points.append({"type": "strong", "text": f"Strong on {label} — {rpg:.1f} tries/game conceded ({v:.1f}x avg)"})
+
+    # Overall ratings
+    attack_score = avg_scored / LEAGUE_AVG_PPG
+    if attack_score >= 1.2:
+        attack_rating = "strong"
+    elif attack_score >= 0.9:
+        attack_rating = "average"
+    else:
+        attack_rating = "weak"
+
+    defence_score = LEAGUE_AVG_PPG / avg_conceded if avg_conceded > 0 else 1.0
+    if defence_score >= 1.2:
+        defence_rating = "strong"
+    elif defence_score >= 0.9:
+        defence_rating = "average"
+    else:
+        defence_rating = "weak"
+
+    return {
+        "attack": attack_points,
+        "defence": defence_points,
+        "attack_rating": attack_rating,
+        "defence_rating": defence_rating,
+    }
+
+
+def invalidate_cache():
+    """Clear the position rates cache (call after scraping)."""
+    global _position_rates_cache
+    _position_rates_cache = None

@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: nrl-try-predictor-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: ODDS_API_KEY
+        sync: false
+    disk:
+      name: nrl-data
+      mountPath: /app/data
+      sizeGB: 1
+
+  - type: web
+    name: nrl-try-predictor-frontend
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_BASE
+        value: https://nrl-try-predictor-backend.onrender.com/api
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

@@ -1,0 +1,114 @@
+import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+
+export default function PlayerCard({ player, rank, teamColor, actualTries, isCompleted, edgeThreshold }) {
+  const [imgFailed, setImgFailed] = useState(false)
+  const navigate = useNavigate()
+
+  const getBarColor = (pct) => {
+    if (pct >= 30) return '#22c55e'
+    if (pct >= 20) return '#84cc16'
+    if (pct >= 15) return '#eab308'
+    if (pct >= 10) return '#f97316'
+    return '#94a3b8'
+  }
+
+  const barColor = getBarColor(player.try_percentage)
+
+  // Check if this player actually scored in completed matches
+  const didScore = isCompleted && actualTries
+    ? actualTries.some(t => t.player === player.name)
+    : false
+  const tryCount = isCompleted && actualTries
+    ? actualTries.filter(t => t.player === player.name).length
+    : 0
+
+  const handleClick = () => {
+    const params = new URLSearchParams({ name: player.name })
+    if (player.headshot && !imgFailed) params.set('headshot', player.headshot)
+    if (teamColor) params.set('color', teamColor)
+    navigate(`/player?${params.toString()}`)
+  }
+
+  const bookmakers = player.bookmaker_odds || []
+  const hasBookmakers = bookmakers.length > 0
+
+  // Best edge for this player
+  const modelProb = player.model_odds ? 1 / player.model_odds : 0
+  const playerBestEdge = hasBookmakers && modelProb > 0
+    ? Math.max(...bookmakers.map(bk => modelProb - 1 / bk.decimal))
+    : -Infinity
+  const isTopEdge = playerBestEdge > 0 && edgeThreshold != null && playerBestEdge >= edgeThreshold
+
+  return (
+    <div
+      className={`player-card clickable ${isCompleted ? (didScore ? 'scored' : '') : ''} ${isTopEdge ? 'top-edge' : ''}`}
+      onClick={handleClick}
+    >
+      <div className="player-card-main">
+        {rank && <div className="player-rank">#{rank}</div>}
+        <div className="player-avatar">
+          {player.headshot && !imgFailed ? (
+            <img
+              className="player-headshot"
+              src={player.headshot}
+              alt={player.name}
+              onError={() => setImgFailed(true)}
+            />
+          ) : (
+            <div className="player-number-circle" style={{ backgroundColor: teamColor }}>
+              {player.number}
+            </div>
+          )}
+          <span className="player-jersey" style={{ borderColor: teamColor, color: teamColor }}>
+            #{player.number}
+          </span>
+        </div>
+        <div className="player-info">
+          <span className="player-name">
+            {player.name}
+            {player.is_captain && <span className="captain-badge">C</span>}
+          </span>
+          <span className="player-position">
+            {player.position}
+            {player.field_side && (
+              <span className="field-side-tag">{player.field_side === 'left' ? 'L' : player.field_side === 'right' ? 'R' : player.field_side === 'fullback' ? 'FB' : 'M'}</span>
+            )}
+          </span>
+          {isTopEdge && <span className="best-edge-badge">BEST EDGE</span>}
+        </div>
+        <div className="player-model-block">
+          <span className="player-model-label">Model</span>
+          {player.model_odds && (
+            <span className="player-model-price">${player.model_odds.toFixed(2)}</span>
+          )}
+          <span className="player-try-pct">{player.try_percentage}%</span>
+        </div>
+        <div className="player-odds-row">
+          {bookmakers.map((bk, i) => {
+            const mProb = player.model_odds ? 1 / player.model_odds : 0
+            const bkProb = 1 / bk.decimal
+            const edge = mProb - bkProb
+            const isValue = edge > 0
+            return (
+              <div key={i} className={`odds-block ${isValue ? 'value' : ''}`}>
+                <span className="odds-block-label">{bk.bookmaker}</span>
+                <span className="odds-block-value">${bk.decimal.toFixed(2)}</span>
+                {player.model_odds && (
+                  <span className={`odds-block-edge ${isValue ? 'positive' : 'negative'}`}>
+                    {isValue ? '+' : ''}{(edge * 100).toFixed(1)}%
+                  </span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+        {isCompleted && (
+          <div className={`actual-result ${didScore ? 'scored' : 'no-try'}`}>
+            {didScore ? (tryCount > 1 ? `${tryCount} TRIES` : 'TRY') : '—'}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
