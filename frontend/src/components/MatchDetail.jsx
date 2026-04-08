@@ -21,18 +21,14 @@ export default function MatchDetail({ apiBase }) {
     const isVersionSwitch = match !== null
     if (isVersionSwitch) setVersionLoading(true)
     else setLoading(true)
-    const fetchData = () => {
-      fetch(`${apiBase}/match?url=${encodeURIComponent(matchUrl)}&version=${modelVersion}`)
-        .then(r => {
-          if (r.status === 503) { setTimeout(fetchData, 3000); return null }
-          if (r.status === 403) throw new Error('Team lists have not been announced for this match yet')
-          if (!r.ok) throw new Error('Could not load match data')
-          return r.json()
-        })
-        .then(data => { if (data) { setMatch(data); setLoading(false); setVersionLoading(false) } })
-        .catch(e => { setError(e.message); setLoading(false); setVersionLoading(false) })
-    }
-    fetchData()
+    fetch(`${apiBase}/match?url=${encodeURIComponent(matchUrl)}&version=${modelVersion}`)
+      .then(r => {
+        if (r.status === 403) throw new Error('Team lists have not been announced for this match yet')
+        if (!r.ok) throw new Error('Could not load match data')
+        return r.json()
+      })
+      .then(data => { setMatch(data); setLoading(false); setVersionLoading(false) })
+      .catch(e => { setError(e.message); setLoading(false); setVersionLoading(false) })
   }, [apiBase, matchUrl, modelVersion])
 
   if (loading) return <div className="loading">Fetching team lists and calculating predictions...</div>

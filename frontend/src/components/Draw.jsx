@@ -33,19 +33,13 @@ export default function Draw({ apiBase }) {
     const isVersionSwitch = roundData !== null
     if (isVersionSwitch) setVersionLoading(true)
     else setLoading(true)
-    const fetchData = () => {
-      fetch(`${apiBase}/rounds/${roundNumber}?version=${modelVersion}`)
-        .then(r => {
-          if (r.status === 503) { setTimeout(fetchData, 3000); return null }
-          return r.json()
-        })
-        .then(data => { if (data) { setRoundData(data); setLoading(false); setVersionLoading(false) } })
-        .catch(() => { setLoading(false); setVersionLoading(false) })
-    }
-    fetchData()
+    fetch(`${apiBase}/rounds/${roundNumber}?version=${modelVersion}`)
+      .then(r => r.json())
+      .then(data => { setRoundData(data); setLoading(false); setVersionLoading(false) })
+      .catch(() => { setLoading(false); setVersionLoading(false) })
   }, [apiBase, roundNumber, modelVersion])
 
-  if (loading) return <div className="loading">Loading model data — this may take a moment on first visit...</div>
+  if (loading) return <div className="loading">Loading draw from NRL...</div>
   if (!roundData) return <div className="error">Round not found</div>
 
   const formatDate = (dt) => {
