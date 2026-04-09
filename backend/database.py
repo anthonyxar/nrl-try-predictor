@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # --- In-memory TTL cache to reduce round-trips to remote Supabase ---
 _query_cache = {}
 _cache_lock = threading.Lock()
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = 1800  # 30 minutes — data only changes via cron job
 
 
 def _cache_key(func_name, *args, **kwargs):
@@ -85,7 +85,7 @@ def _get_pool():
             sep = "&" if "?" in dsn else "?"
             dsn += f"{sep}sslmode=require"
         _pool = psycopg2.pool.ThreadedConnectionPool(
-            1, 10, dsn,
+            2, 20, dsn,
             options="-c statement_timeout=30000",
         )
         atexit.register(_close_pool)
@@ -223,6 +223,14 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_player ON tries(player_name)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_season ON matches(season)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_teams ON matches(home_team, away_team)")
+    # Composite indexes for the hot-path queries
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_home_state ON matches(home_team, match_state, season DESC, round_number DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_away_state ON matches(away_team, match_state, season DESC, round_number DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_state_season ON matches(match_state, season DESC, round_number DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_name_match ON players(name, match_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_match_player_side ON tries(match_id, player_name, side)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_match_side_field ON tries(match_id, side, field_side)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_venue_state ON matches(venue, match_state)")
 
     conn.commit()
 
@@ -451,6 +459,145 @@ def get_player_try_history(player_name: str, before_season=None, before_round=No
     return [dict(r) for r in rows]
 
 
+def get_players_try_histories_batch(player_names: list, before_season=None, before_round=None) -> dict:
+    """Batch fetch try histories for multiple players in a single query.
+    Returns: {player_name: [history_rows]}"""
+    if not player_names:
+        return {}
+
+    # Check cache first — return cached ones, query only uncached
+    uncached = []
+    result = {}
+    now = time.monotonic()
+    for name in player_names:
+        key = _cache_key("player_try_history", name, before_season, before_round)
+        with _cache_lock:
+            if key in _query_cache:
+                val, ts = _query_cache[key]
+                if now - ts < CACHE_TTL:
+                    result[name] = val
+                    continue
+        uncached.append(name)
+
+    if not uncached:
+        return result
+
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    placeholders = ", ".join(["%s"] * len(uncached))
+    conn = get_db()
+    rows = conn.execute(f"""
+        SELECT p.name, p.position, p.team, p.side, p.jersey_number,
+               m.season, m.round_number, m.home_team, m.away_team,
+               m.home_score, m.away_score,
+               (SELECT COUNT(*) FROM tries t
+                WHERE t.match_id = m.id AND t.player_name = p.name AND t.side = p.side) as tries_scored
+        FROM players p
+        JOIN matches m ON p.match_id = m.id
+        WHERE p.name IN ({placeholders}) AND m.match_state = 'FullTime'{tf}
+        ORDER BY p.name, m.season, m.round_number
+    """, (*uncached, *tp)).fetchall()
+    conn.close()
+
+    # Group by player name
+    batch = {}
+    for r in rows:
+        name = r["name"]
+        if name not in batch:
+            batch[name] = []
+        batch[name].append(dict(r))
+
+    # Cache individual results
+    now = time.monotonic()
+    with _cache_lock:
+        for name in uncached:
+            hist = batch.get(name, [])
+            key = _cache_key("player_try_history", name, before_season, before_round)
+            _query_cache[key] = (hist, now)
+            result[name] = hist
+
+    return result
+
+
+def get_players_recent_form_batch(player_names: list, last_n_games: int = 5,
+                                   before_season=None, before_round=None) -> dict:
+    """Batch fetch recent form for multiple players in a single query.
+    Returns: {player_name: {games, tries, rate, streak}}"""
+    if not player_names:
+        return {}
+
+    # Check cache first
+    uncached = []
+    result = {}
+    now = time.monotonic()
+    for name in player_names:
+        key = _cache_key("player_recent_form", name, last_n_games, before_season, before_round)
+        with _cache_lock:
+            if key in _query_cache:
+                val, ts = _query_cache[key]
+                if now - ts < CACHE_TTL:
+                    result[name] = val
+                    continue
+        uncached.append(name)
+
+    if not uncached:
+        return result
+
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    placeholders = ", ".join(["%s"] * len(uncached))
+    conn = get_db()
+    # Use a window function to rank games per player and limit to last N
+    rows = conn.execute(f"""
+        SELECT sub.name, sub.tries_scored FROM (
+            SELECT p.name,
+                   (SELECT COUNT(*) FROM tries t
+                    WHERE t.match_id = m.id AND t.player_name = p.name AND t.side = p.side) as tries_scored,
+                   ROW_NUMBER() OVER (PARTITION BY p.name ORDER BY m.season DESC, m.round_number DESC) as rn
+            FROM players p
+            JOIN matches m ON p.match_id = m.id
+            WHERE p.name IN ({placeholders}) AND m.match_state = 'FullTime'{tf}
+        ) sub WHERE sub.rn <= %s
+        ORDER BY sub.name, sub.rn
+    """, (*uncached, *tp, last_n_games)).fetchall()
+    conn.close()
+
+    # Group by player
+    batch = {}
+    for r in rows:
+        name = r["name"]
+        if name not in batch:
+            batch[name] = []
+        batch[name].append(r["tries_scored"])
+
+    # Compute form stats and cache
+    default = {"games": 0, "tries": 0, "rate": 0, "streak": 0}
+    now = time.monotonic()
+    with _cache_lock:
+        for name in uncached:
+            scores = batch.get(name, [])
+            if not scores:
+                form = default.copy()
+            else:
+                games = len(scores)
+                tries = sum(scores)
+                streak = 0
+                for s in scores:
+                    if s > 0:
+                        streak += 1
+                    else:
+                        break
+                form = {
+                    "games": games,
+                    "tries": tries,
+                    "rate": round(tries / games, 3) if games > 0 else 0,
+                    "streak": streak,
+                }
+            key = _cache_key("player_recent_form", name, last_n_games, before_season, before_round)
+            _query_cache[key] = (form, now)
+            result[name] = form
+
+    return result
+
+
 @_cached_query("position_try_rates")
 def get_position_try_rates() -> dict:
     """
@@ -484,6 +631,200 @@ def get_position_try_rates() -> dict:
             "total_tries": tries,
             "rate": tries / apps if apps > 0 else 0,
         }
+    return result
+
+
+def prefetch_round_data(team_names: list, matchups: list, last_n_games: int = 10,
+                        before_season=None, before_round=None):
+    """Pre-fetch all team stats needed for a round in bulk queries.
+    Populates individual caches so subsequent calls are instant.
+    team_names: list of team names, matchups: list of (home, away) tuples."""
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+
+    # 1. Batch fetch recent matches — limit to ~200 rows (enough for 16 teams × 10 games each)
+    placeholders = ", ".join(["%s"] * len(team_names))
+    all_matches = conn.execute(f"""
+        SELECT home_team, away_team, home_score, away_score, season, round_number, venue
+        FROM matches m
+        WHERE (home_team IN ({placeholders}) OR away_team IN ({placeholders}))
+          AND match_state = 'FullTime'
+          AND home_score IS NOT NULL{tf}
+        ORDER BY season DESC, round_number DESC
+        LIMIT 200
+    """, (*team_names, *team_names, *tp)).fetchall()
+
+    # 2. Fetch venue stats for all venues in the matchups (separate query, no temporal filter)
+    # matchups can be (home, away) or (home, away, venue) tuples
+    venue_names = list(set(
+        m[2] for m in matchups if len(m) > 2 and m[2]
+    ) | set(
+        r["venue"] for r in all_matches if r.get("venue")
+    ))
+    venue_matches = {}
+    if venue_names:
+        vn_placeholders = ", ".join(["%s"] * len(venue_names))
+        venue_rows = conn.execute(f"""
+            SELECT venue, home_team, away_team, home_score, away_score
+            FROM matches
+            WHERE venue IN ({vn_placeholders})
+              AND match_state = 'FullTime' AND home_score IS NOT NULL
+        """, tuple(venue_names)).fetchall()
+        for vr in venue_rows:
+            v = vr["venue"]
+            if v not in venue_matches:
+                venue_matches[v] = []
+            venue_matches[v].append(vr)
+
+    conn.close()
+
+    now = time.monotonic()
+
+    # Process attack/defence stats per team
+    for team in team_names:
+        team_rows = [r for r in all_matches if r["home_team"] == team or r["away_team"] == team][:last_n_games]
+        stats = _compute_attack_defence(team, team_rows)
+        key = _cache_key("team_attack_defence", team, last_n_games, before_season, before_round)
+        with _cache_lock:
+            _query_cache[key] = (stats, now)
+
+    # Process home/away win rates per team
+    for team in team_names:
+        team_home = [r for r in all_matches if r["home_team"] == team]
+        team_away = [r for r in all_matches if r["away_team"] == team]
+        ha_stats = _compute_home_away_rate(team, team_home, team_away)
+        key = _cache_key("home_away_win_rate", team, before_season, before_round)
+        with _cache_lock:
+            _query_cache[key] = (ha_stats, now)
+
+    # Process h2h for each matchup
+    for matchup in matchups:
+        home, away = matchup[0], matchup[1]
+        h2h_rows = [r for r in all_matches
+                     if (r["home_team"] == home and r["away_team"] == away) or
+                        (r["home_team"] == away and r["away_team"] == home)]
+        h2h_stats = _compute_h2h(home, away, h2h_rows)
+        key = _cache_key("h2h_record", home, away, before_season, before_round)
+        with _cache_lock:
+            _query_cache[key] = (h2h_stats, now)
+
+    # Process venue stats for each matchup
+    for matchup in matchups:
+        home = matchup[0]
+        venue = matchup[2] if len(matchup) > 2 else ""
+        if not venue or venue not in venue_matches:
+            continue
+        vrows = venue_matches[venue]
+        # Cache venue stats without team filter
+        vstats_all = _compute_venue_stats(vrows, None)
+        key_all = _cache_key("venue_stats", venue, None)
+        with _cache_lock:
+            _query_cache[key_all] = (vstats_all, now)
+        # Cache venue stats for the home team
+        vstats_home = _compute_venue_stats(vrows, home)
+        key_home = _cache_key("venue_stats", venue, home)
+        with _cache_lock:
+            _query_cache[key_home] = (vstats_home, now)
+
+
+def _compute_attack_defence(team_name, rows):
+    """Compute attack/defence stats from pre-fetched match rows."""
+    if not rows:
+        return {
+            "avg_scored": 22.0, "avg_conceded": 22.0,
+            "avg_scored_recent": 22.0, "avg_conceded_recent": 22.0,
+            "wins": 0, "wins_recent": 0, "played": 0,
+        }
+    total_scored = total_conceded = wins = 0
+    recent_scored = recent_conceded = recent_wins = 0
+    recent_n = min(5, len(rows))
+    for i, r in enumerate(rows):
+        if r["home_team"] == team_name:
+            scored, conceded = r["home_score"], r["away_score"]
+            won = r["home_score"] > r["away_score"]
+        else:
+            scored, conceded = r["away_score"], r["home_score"]
+            won = r["away_score"] > r["home_score"]
+        total_scored += scored
+        total_conceded += conceded
+        if won:
+            wins += 1
+        if i < recent_n:
+            recent_scored += scored
+            recent_conceded += conceded
+            if won:
+                recent_wins += 1
+    n = len(rows)
+    return {
+        "avg_scored": total_scored / n, "avg_conceded": total_conceded / n,
+        "avg_scored_recent": recent_scored / recent_n if recent_n > 0 else 22.0,
+        "avg_conceded_recent": recent_conceded / recent_n if recent_n > 0 else 22.0,
+        "wins": wins, "wins_recent": recent_wins, "played": n,
+    }
+
+
+def _compute_home_away_rate(team_name, home_rows, away_rows):
+    """Compute home/away win rate from pre-fetched rows."""
+    home_played = len(home_rows)
+    home_wins = sum(1 for r in home_rows if r["home_score"] > r["away_score"])
+    away_played = len(away_rows)
+    away_wins = sum(1 for r in away_rows if r["away_score"] > r["home_score"])
+    return {
+        "home_played": home_played, "home_wins": home_wins,
+        "home_win_rate": home_wins / home_played if home_played > 0 else 0.5,
+        "away_played": away_played, "away_wins": away_wins,
+        "away_win_rate": away_wins / away_played if away_played > 0 else 0.5,
+    }
+
+
+def _compute_h2h(team_a, team_b, rows):
+    """Compute H2H record from pre-fetched rows."""
+    a_wins = b_wins = 0
+    for r in rows:
+        if r["home_team"] == team_a:
+            if r["home_score"] > r["away_score"]:
+                a_wins += 1
+            elif r["away_score"] > r["home_score"]:
+                b_wins += 1
+        else:
+            if r["away_score"] > r["home_score"]:
+                a_wins += 1
+            elif r["home_score"] > r["away_score"]:
+                b_wins += 1
+    return {"team_a_wins": a_wins, "team_b_wins": b_wins, "played": len(rows)}
+
+
+def _compute_venue_stats(rows, team_name=None):
+    """Compute venue stats from pre-fetched rows. Mirrors get_venue_stats() logic."""
+    if team_name:
+        # Filter to only matches involving this team (matches original SQL filter)
+        rows = [r for r in rows if r["home_team"] == team_name or r["away_team"] == team_name]
+    if not rows:
+        return {"games": 0, "home_win_rate": 0.5, "avg_total_score": 44.0}
+    games = len(rows)
+    home_wins = 0
+    total_score = 0
+    team_wins = 0
+    team_games = 0
+    for r in rows:
+        total_score += (r["home_score"] or 0) + (r["away_score"] or 0)
+        if r["home_score"] > r["away_score"]:
+            home_wins += 1
+        if team_name:
+            team_games += 1
+            is_home = r["home_team"] == team_name
+            if is_home and r["home_score"] > r["away_score"]:
+                team_wins += 1
+            elif not is_home and r["away_score"] > r["home_score"]:
+                team_wins += 1
+    result = {
+        "games": games,
+        "home_win_rate": round(home_wins / games, 3) if games > 0 else 0.5,
+        "avg_total_score": round(total_score / games, 1) if games > 0 else 44.0,
+    }
+    if team_name:
+        result["team_win_rate"] = round(team_wins / team_games, 3) if team_games > 0 else 0.5
+        result["team_games"] = team_games
     return result
 
 
@@ -622,61 +963,46 @@ def get_home_away_win_rate(team_name: str, before_season=None, before_round=None
 def get_team_tries_conceded_by_position(team_name: str, last_n_games: int = 15, before_season=None, before_round=None) -> dict:
     """
     Get how many tries a team concedes to each position.
-    Returns: {position: {conceded: N, games: N, rate: float, league_avg: float, vulnerability: float}}
-    vulnerability > 1.0 means they concede MORE than league average to that position.
+    Uses a single query instead of N+1.
     """
-    tf, tp = _temporal_filter("matches", before_season, before_round)
+    tf, tp = _temporal_filter("m", before_season, before_round)
     conn = get_db()
 
-    # Find the last N matches for this team
-    match_rows = conn.execute(f"""
-        SELECT id, home_team, away_team
-        FROM matches
-        WHERE (home_team = %s OR away_team = %s)
-          AND match_state = 'FullTime'{tf}
-        ORDER BY season DESC, round_number DESC
-        LIMIT %s
-    """, (team_name, team_name, *tp, last_n_games)).fetchall()
-
-    if not match_rows:
-        conn.close()
-        return {}
-
-    match_ids = [r["id"] for r in match_rows]
-    games = len(match_ids)
-
-    # For each match, the "opposing" side scored the tries against this team
-    conceded_tries = []
-    for mr in match_rows:
-        conceding_side = "away" if mr["home_team"] == team_name else "home"
-        scoring_side = "home" if conceding_side == "away" else "away"
-        tries = conn.execute("""
-            SELECT t.player_name, p.position
-            FROM tries t
-            LEFT JOIN players p ON p.match_id = t.match_id AND p.name = t.player_name AND p.side = t.side
-            WHERE t.match_id = %s AND t.side = %s
-        """, (mr["id"], scoring_side)).fetchall()
-        for t in tries:
-            pos = t["position"] or "Unknown"
-            conceded_tries.append(pos)
-
+    # Single query: get matches + tries conceded in one go
+    rows = conn.execute(f"""
+        WITH recent_matches AS (
+            SELECT id, home_team, away_team
+            FROM matches m
+            WHERE (m.home_team = %s OR m.away_team = %s)
+              AND m.match_state = 'FullTime'{tf}
+            ORDER BY m.season DESC, m.round_number DESC
+            LIMIT %s
+        )
+        SELECT p.position, COUNT(*) as cnt,
+               (SELECT COUNT(*) FROM recent_matches) as games
+        FROM recent_matches rm
+        JOIN tries t ON t.match_id = rm.id
+            AND t.side = CASE WHEN rm.home_team = %s THEN 'away' ELSE 'home' END
+        LEFT JOIN players p ON p.match_id = t.match_id AND p.name = t.player_name AND p.side = t.side
+        WHERE p.position IS NOT NULL AND p.position != ''
+        GROUP BY p.position
+    """, (team_name, team_name, *tp, last_n_games, team_name)).fetchall()
     conn.close()
 
-    # Count by position
-    from collections import Counter
-    pos_counts = Counter(conceded_tries)
+    if not rows:
+        return {}
 
-    # Get league-wide position try rates for comparison
+    games = rows[0]["games"] if rows else 0
     league_rates = get_position_try_rates()
 
+    from collections import Counter
     result = {}
-    for pos, count in pos_counts.items():
-        if not pos or pos == "Unknown":
-            continue
+    for r in rows:
+        pos = r["position"]
+        count = r["cnt"]
         conceded_rate = count / games if games > 0 else 0
         league_rate = league_rates.get(pos, {}).get("rate", 0.1)
         vulnerability = conceded_rate / league_rate if league_rate > 0 else 1.0
-
         result[pos] = {
             "conceded": count,
             "games": games,
@@ -692,59 +1018,53 @@ def get_team_tries_conceded_by_position(team_name: str, last_n_games: int = 15, 
 def get_team_tries_conceded_by_edge(team_name: str, last_n_games: int = 15, before_season=None, before_round=None) -> dict:
     """
     Get how many tries a team concedes on each edge (left / right / middle).
-    Returns: {edge: {conceded: N, games: N, rate_per_game: float}}
-    'left'/'right' from the SCORING team's perspective, so a team's left-edge
-    weakness means they leak tries to the opponent's left-side attackers.
+    Uses a single query instead of N+1.
     """
-    tf, tp = _temporal_filter("matches", before_season, before_round)
+    tf, tp = _temporal_filter("m", before_season, before_round)
     conn = get_db()
 
-    match_rows = conn.execute(f"""
-        SELECT id, home_team, away_team
-        FROM matches
-        WHERE (home_team = %s OR away_team = %s)
-          AND match_state = 'FullTime'{tf}
-        ORDER BY season DESC, round_number DESC
-        LIMIT %s
-    """, (team_name, team_name, *tp, last_n_games)).fetchall()
+    # Single query: matches + edge counts
+    rows = conn.execute(f"""
+        WITH recent_matches AS (
+            SELECT id, home_team
+            FROM matches m
+            WHERE (m.home_team = %s OR m.away_team = %s)
+              AND m.match_state = 'FullTime'{tf}
+            ORDER BY m.season DESC, m.round_number DESC
+            LIMIT %s
+        )
+        SELECT t.field_side, COUNT(*) as cnt,
+               (SELECT COUNT(*) FROM recent_matches) as games
+        FROM recent_matches rm
+        JOIN tries t ON t.match_id = rm.id
+            AND t.side = CASE WHEN rm.home_team = %s THEN 'away' ELSE 'home' END
+            AND t.field_side != ''
+        GROUP BY t.field_side
+    """, (team_name, team_name, *tp, last_n_games, team_name)).fetchall()
 
-    if not match_rows:
-        conn.close()
-        return {}
-
-    games = len(match_rows)
-    edge_counts = {"left": 0, "right": 0, "middle": 0, "fullback": 0}
-
-    for mr in match_rows:
-        scoring_side = "away" if mr["home_team"] == team_name else "home"
-        tries = conn.execute("""
-            SELECT field_side FROM tries
-            WHERE match_id = %s AND side = %s AND field_side != ''
-        """, (mr["id"], scoring_side)).fetchall()
-        for t in tries:
-            fs = t["field_side"]
-            if fs in edge_counts:
-                edge_counts[fs] += 1
-
-    conn.close()
-
-    # Calculate league-wide edge rates for comparison
-    total_conn = get_db()
-    league_totals = total_conn.execute("""
-        SELECT field_side, COUNT(*) as cnt
+    # League-wide rates (single query)
+    league_rows = conn.execute("""
+        SELECT field_side, COUNT(*) as cnt,
+               (SELECT COUNT(*) FROM matches WHERE match_state = 'FullTime') as total_games
         FROM tries
         WHERE field_side != ''
         GROUP BY field_side
     """).fetchall()
-    league_games_row = total_conn.execute("""
-        SELECT COUNT(*) as cnt FROM matches WHERE match_state = 'FullTime'
-    """).fetchone()
-    total_conn.close()
+    conn.close()
 
-    league_games = league_games_row["cnt"] if league_games_row else 1
+    if not rows:
+        return {}
+
+    games = rows[0]["games"] if rows else 0
+    edge_counts = {"left": 0, "right": 0, "middle": 0, "fullback": 0}
+    for r in rows:
+        fs = r["field_side"]
+        if fs in edge_counts:
+            edge_counts[fs] = r["cnt"]
+
+    league_games = league_rows[0]["total_games"] if league_rows else 1
     league_edge_rates = {}
-    for r in league_totals:
-        # Each match has 2 teams, so per-team rate = total / (games * 2)
+    for r in league_rows:
         league_edge_rates[r["field_side"]] = r["cnt"] / (league_games * 2) if league_games > 0 else 0
 
     result = {}

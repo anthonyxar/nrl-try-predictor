@@ -28,6 +28,7 @@ from database import (
     get_team_roster, get_team_recent_results,
     get_team_attack_defence, get_home_away_win_rate,
     get_team_tries_conceded_by_edge, get_venue_stats,
+    prefetch_round_data,
 )
 from odds_client import (
     add_implied_odds_to_players,
@@ -42,14 +43,57 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init DB, run prediction backfill in background."""
+    """Startup: init DB, warm cache, run prediction backfill in background."""
     init_db()
     existing = get_total_match_count()
     logger.info(f"Starting up. DB has {existing} matches.")
 
     pred_task = asyncio.create_task(_prediction_sync())
+    warmup_task = asyncio.create_task(_warm_cache())
     yield
     pred_task.cancel()
+    warmup_task.cancel()
+
+
+async def _warm_cache():
+    """Pre-load the cache for the current round so first page load is fast."""
+    try:
+        await asyncio.sleep(1)
+        logger.info("Warming cache...")
+
+        # Find the latest round with completed or upcoming matches
+        # Search forward from round 1 to find the current active round
+        target_round = None
+        target_raw = None
+        for r in range(1, TOTAL_ROUNDS + 1):
+            raw = await fetch_round(r)
+            if not raw:
+                continue
+            fixtures, _ = parse_fixtures(raw)
+            if not fixtures:
+                continue
+            # Check if this round has any non-FullTime matches (upcoming/live)
+            has_upcoming = any(
+                (f.get("match_state") or "").lower() not in ("fulltime", "postmatch")
+                for f in fixtures
+            )
+            if has_upcoming:
+                target_round = r
+                target_raw = raw
+                break
+            # Track the latest completed round as fallback
+            target_round = r
+            target_raw = raw
+
+        if target_raw and target_round:
+            fixtures, _ = parse_fixtures(target_raw)
+            logger.info(f"Warming cache for round {target_round} ({len(fixtures)} matches)...")
+            await asyncio.to_thread(_enrich_fixtures, fixtures, 2, target_round)
+            logger.info(f"Cache warmed for round {target_round}.")
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning(f"Cache warmup failed (non-critical): {e}")
 
 
 PREDICTION_SYNC_INTERVAL = 600  # 10 minutes
@@ -272,52 +316,78 @@ async def get_rounds():
     }
 
 
+def _predict_single_fixture(f, model_version, round_number):
+    """Predict win probability for a single fixture (runs in its own thread)."""
+    home = f.get("home_team", "")
+    away = f.get("away_team", "")
+    if not home or not away:
+        return f
+    wp = predict_win_probability(home, away, {}, {}, model_version=model_version,
+                                 before_season=SEASON, before_round=round_number,
+                                 venue=f.get("venue", ""))
+    f["predicted_winner"] = wp["predicted_winner"]
+    f["home_win_prob"] = wp["home_win_prob"]
+    f["away_win_prob"] = wp["away_win_prob"]
+    f["predicted_home_score"] = wp["predicted_home_score"]
+    f["predicted_away_score"] = wp["predicted_away_score"]
+    home_odds_str = f.get("home_odds", "")
+    away_odds_str = f.get("away_odds", "")
+    if home_odds_str and away_odds_str:
+        try:
+            home_dec = float(home_odds_str)
+            away_dec = float(away_odds_str)
+            if home_dec > 0 and away_dec > 0:
+                home_implied = 1.0 / home_dec
+                away_implied = 1.0 / away_dec
+                f["odds_comparison"] = {
+                    "home_decimal": home_dec, "away_decimal": away_dec,
+                    "home_implied_prob": round(home_implied, 4),
+                    "away_implied_prob": round(away_implied, 4),
+                    "home_model_prob": round(wp["home_win_prob"], 4),
+                    "away_model_prob": round(wp["away_win_prob"], 4),
+                    "home_value": wp["home_win_prob"] > home_implied,
+                    "away_value": wp["away_win_prob"] > away_implied,
+                    "home_edge": round(wp["home_win_prob"] - home_implied, 4),
+                    "away_edge": round(wp["away_win_prob"] - away_implied, 4),
+                }
+        except (ValueError, ZeroDivisionError):
+            pass
+    state = (f.get("match_state") or "").lower()
+    if state in ("fulltime", "postmatch") and f.get("home_score") is not None and f.get("away_score") is not None:
+        if f["home_score"] > f["away_score"]:
+            f["actual_winner"] = home
+        elif f["away_score"] > f["home_score"]:
+            f["actual_winner"] = away
+        else:
+            f["actual_winner"] = "Draw"
+        f["prediction_correct"] = f["predicted_winner"] == f["actual_winner"]
+    return f
+
+
 def _enrich_fixtures(fixtures, model_version, round_number):
-    """Add win predictions to fixtures — runs in thread to avoid blocking event loop."""
+    """Add win predictions to all fixtures. Pre-fetches all team data in ONE query."""
+    # Collect all teams and matchups (with venues for prefetch)
+    team_names = set()
+    matchups = []
     for f in fixtures:
         home = f.get("home_team", "")
         away = f.get("away_team", "")
+        venue = f.get("venue", "")
         if home and away:
-            wp = predict_win_probability(home, away, {}, {}, model_version=model_version,
-                                         before_season=SEASON, before_round=round_number,
-                                         venue=f.get("venue", ""))
-            f["predicted_winner"] = wp["predicted_winner"]
-            f["home_win_prob"] = wp["home_win_prob"]
-            f["away_win_prob"] = wp["away_win_prob"]
-            f["predicted_home_score"] = wp["predicted_home_score"]
-            f["predicted_away_score"] = wp["predicted_away_score"]
-            home_odds_str = f.get("home_odds", "")
-            away_odds_str = f.get("away_odds", "")
-            if home_odds_str and away_odds_str:
-                try:
-                    home_dec = float(home_odds_str)
-                    away_dec = float(away_odds_str)
-                    if home_dec > 0 and away_dec > 0:
-                        home_implied = 1.0 / home_dec
-                        away_implied = 1.0 / away_dec
-                        f["odds_comparison"] = {
-                            "home_decimal": home_dec,
-                            "away_decimal": away_dec,
-                            "home_implied_prob": round(home_implied, 4),
-                            "away_implied_prob": round(away_implied, 4),
-                            "home_model_prob": round(wp["home_win_prob"], 4),
-                            "away_model_prob": round(wp["away_win_prob"], 4),
-                            "home_value": wp["home_win_prob"] > home_implied,
-                            "away_value": wp["away_win_prob"] > away_implied,
-                            "home_edge": round(wp["home_win_prob"] - home_implied, 4),
-                            "away_edge": round(wp["away_win_prob"] - away_implied, 4),
-                        }
-                except (ValueError, ZeroDivisionError):
-                    pass
-            state = (f.get("match_state") or "").lower()
-            if state in ("fulltime", "postmatch") and f.get("home_score") is not None and f.get("away_score") is not None:
-                if f["home_score"] > f["away_score"]:
-                    f["actual_winner"] = home
-                elif f["away_score"] > f["home_score"]:
-                    f["actual_winner"] = away
-                else:
-                    f["actual_winner"] = "Draw"
-                f["prediction_correct"] = f["predicted_winner"] == f["actual_winner"]
+            team_names.add(home)
+            team_names.add(away)
+            matchups.append((home, away, venue))
+
+    # Pre-fetch all team data in a single bulk query (1 query instead of ~40)
+    if team_names:
+        prefetch_round_data(
+            list(team_names), matchups, last_n_games=10,
+            before_season=SEASON, before_round=round_number,
+        )
+
+    # Now run predictions — all DB calls will hit the cache
+    for f in fixtures:
+        _predict_single_fixture(f, model_version, round_number)
     return fixtures
 
 
@@ -399,6 +469,15 @@ def _compute_match_detail(url, raw, home_players, away_players,
     match_venue = raw.get("venue", "")
     match_weather = raw.get("weather", "")
     match_ground = raw.get("groundConditions", "")
+
+    # Pre-fetch all team data in one bulk query (venue stats, attack/defence, h2h)
+    prefetch_round_data(
+        [home_nickname, away_nickname],
+        [(home_nickname, away_nickname, match_venue)],
+        last_n_games=10,
+        before_season=before_season,
+        before_round=before_round,
+    )
 
     predictions = generate_predictions(
         home_players, away_players,
