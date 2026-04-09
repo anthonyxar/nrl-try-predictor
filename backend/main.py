@@ -22,14 +22,13 @@ from model import (
 )
 from database import (
     init_db, get_total_match_count, get_total_try_count,
-    get_player_game_log, reset_scrape_progress, get_db,
+    get_player_game_log, get_db,
     upsert_prediction, get_accuracy_stats, get_unrecorded_completed_matches,
     search_players, search_teams, get_all_teams,
     get_team_roster, get_team_recent_results,
     get_team_attack_defence, get_home_away_win_rate,
     get_team_tries_conceded_by_edge, get_venue_stats,
 )
-from scraper import scrape_all, sync_current_season
 from odds_client import (
     add_implied_odds_to_players,
     fetch_bookmaker_odds,
@@ -41,69 +40,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-SYNC_INTERVAL_HOURS = 6
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Run historical data scrape on startup, then sync periodically."""
+    """Startup: init DB, run prediction backfill in background."""
     init_db()
     existing = get_total_match_count()
     logger.info(f"Starting up. DB has {existing} matches.")
 
-    # Check if we need to re-scrape for field_side data (including fullback category)
-    if existing > 0:
-        conn = get_db()
-        row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM tries WHERE field_side = 'fullback'"
-        ).fetchone()
-        conn.close()
-        if row["cnt"] == 0:
-            logger.info("No fullback field_side data found — resetting scrape progress for full re-scrape...")
-            reset_scrape_progress()
-
-    # Run scraper in background so API is available immediately
-    scrape_task = asyncio.create_task(_run_scraper_bg())
-    sync_task = asyncio.create_task(_periodic_sync())
     pred_task = asyncio.create_task(_prediction_sync())
     yield
-    scrape_task.cancel()
-    sync_task.cancel()
     pred_task.cancel()
-
-
-async def _run_scraper_bg():
-    """Background scraper task — runs once at startup."""
-    try:
-        logger.info("Starting background historical data scrape...")
-        await scrape_all()
-        invalidate_cache()
-        count = get_total_match_count()
-        tries = get_total_try_count()
-        logger.info(f"Scrape complete: {count} matches, {tries} tries in database.")
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        logger.error(f"Scraper error: {e}")
-
-
-async def _periodic_sync():
-    """Sync current season data every SYNC_INTERVAL_HOURS hours."""
-    # Wait for initial scrape to finish before starting periodic sync
-    await asyncio.sleep(120)
-    while True:
-        try:
-            logger.info(f"Running periodic current-season sync...")
-            await sync_current_season()
-            invalidate_cache()
-            count = get_total_match_count()
-            tries = get_total_try_count()
-            logger.info(f"Periodic sync complete: {count} matches, {tries} tries.")
-        except asyncio.CancelledError:
-            return
-        except Exception as e:
-            logger.error(f"Periodic sync error: {e}")
-        await asyncio.sleep(SYNC_INTERVAL_HOURS * 3600)
 
 
 PREDICTION_SYNC_INTERVAL = 600  # 10 minutes
@@ -317,21 +263,6 @@ async def proxy_image(url: str):
         raise HTTPException(status_code=502, detail="Failed to fetch image")
 
 
-@app.post("/api/sync")
-async def trigger_sync():
-    """Manually trigger a current-season data sync."""
-    asyncio.create_task(_run_sync_once())
-    return {"status": "sync started"}
-
-
-async def _run_sync_once():
-    try:
-        await sync_current_season()
-        invalidate_cache()
-        logger.info("Manual sync complete.")
-    except Exception as e:
-        logger.error(f"Manual sync error: {e}")
-
 
 @app.get("/api/rounds")
 async def get_rounds():
@@ -341,20 +272,8 @@ async def get_rounds():
     }
 
 
-@app.get("/api/rounds/{round_number}")
-async def get_round(round_number: int, version: int = 2):
-
-    model_version = max(1, min(version, 2))
-    if round_number < 1 or round_number > TOTAL_ROUNDS:
-        raise HTTPException(status_code=404, detail="Invalid round number")
-
-    raw = await fetch_round(round_number)
-    if raw is None:
-        raise HTTPException(status_code=502, detail="Could not fetch round data from NRL")
-
-    fixtures, byes = parse_fixtures(raw)
-
-    # Add win prediction to each fixture
+def _enrich_fixtures(fixtures, model_version, round_number):
+    """Add win predictions to fixtures — runs in thread to avoid blocking event loop."""
     for f in fixtures:
         home = f.get("home_team", "")
         away = f.get("away_team", "")
@@ -367,7 +286,6 @@ async def get_round(round_number: int, version: int = 2):
             f["away_win_prob"] = wp["away_win_prob"]
             f["predicted_home_score"] = wp["predicted_home_score"]
             f["predicted_away_score"] = wp["predicted_away_score"]
-            # Odds comparison
             home_odds_str = f.get("home_odds", "")
             away_odds_str = f.get("away_odds", "")
             if home_odds_str and away_odds_str:
@@ -391,7 +309,6 @@ async def get_round(round_number: int, version: int = 2):
                         }
                 except (ValueError, ZeroDivisionError):
                     pass
-            # Check against actual result for completed matches
             state = (f.get("match_state") or "").lower()
             if state in ("fulltime", "postmatch") and f.get("home_score") is not None and f.get("away_score") is not None:
                 if f["home_score"] > f["away_score"]:
@@ -401,6 +318,22 @@ async def get_round(round_number: int, version: int = 2):
                 else:
                     f["actual_winner"] = "Draw"
                 f["prediction_correct"] = f["predicted_winner"] == f["actual_winner"]
+    return fixtures
+
+
+@app.get("/api/rounds/{round_number}")
+async def get_round(round_number: int, version: int = 2):
+
+    model_version = max(1, min(version, 2))
+    if round_number < 1 or round_number > TOTAL_ROUNDS:
+        raise HTTPException(status_code=404, detail="Invalid round number")
+
+    raw = await fetch_round(round_number)
+    if raw is None:
+        raise HTTPException(status_code=502, detail="Could not fetch round data from NRL")
+
+    fixtures, byes = parse_fixtures(raw)
+    fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, model_version, round_number)
 
     return {
         "round": round_number,
@@ -448,29 +381,11 @@ async def get_player(name: str):
     }
 
 
-@app.get("/api/match")
-async def get_match_by_url(url: str, version: int = 2):
+def _compute_match_detail(url, raw, home_players, away_players,
+                          model_version, bookmaker_data, is_completed, match_state):
+    """Heavy sync computation for match detail — runs in a thread."""
+    import json
 
-    if not url.startswith("/draw/"):
-        raise HTTPException(status_code=400, detail="Invalid match URL path")
-
-    model_version = max(1, min(version, 2))
-
-    raw = await fetch_match_detail(url)
-    if raw is None:
-        raise HTTPException(status_code=502, detail="Could not fetch match data from NRL")
-
-    home_players = parse_team_list(raw, "homeTeam")
-    away_players = parse_team_list(raw, "awayTeam")
-
-    if not home_players and not away_players:
-        raise HTTPException(
-            status_code=403,
-            detail="Team lists have not been announced for this match yet"
-        )
-
-    # Extract season/round for temporal filtering
-    # URL format: /draw/nrl-premiership/2025/round-5/team-v-team/
     season_match = re.search(r'/(\d{4})/', url)
     round_match = re.search(r'/round-(\d+)/', url)
     before_season = int(season_match.group(1)) if season_match else None
@@ -485,7 +400,6 @@ async def get_match_by_url(url: str, version: int = 2):
     match_weather = raw.get("weather", "")
     match_ground = raw.get("groundConditions", "")
 
-    # Generate try predictions
     predictions = generate_predictions(
         home_players, away_players,
         stats.get("home", {}), stats.get("away", {}),
@@ -498,27 +412,17 @@ async def get_match_by_url(url: str, version: int = 2):
         ground_conditions=match_ground,
     )
 
-    # Add model-implied decimal odds to each player
     add_implied_odds_to_players(predictions["home"])
     add_implied_odds_to_players(predictions["away"])
 
-    # If Odds API key is configured, enrich with bookmaker odds
-    bookmaker_data = {}
-    match_state = raw.get("matchState", "")
-    is_completed = match_state in ("FullTime", "PostMatch")
-    if has_odds_api_key() and not is_completed:
-        try:
-            bookmaker_data = await fetch_bookmaker_odds()
-            for side, team_name in [("home", home_nickname), ("away", away_nickname)]:
-                opp_name = away_nickname if side == "home" else home_nickname
-                for p in predictions[side]:
-                    bk_list = lookup_bookmaker_odds(bookmaker_data, team_name, opp_name, p["name"])
-                    if bk_list:
-                        p["bookmaker_odds"] = bk_list  # list of {bookmaker, decimal}
-        except Exception as e:
-            logger.warning(f"Failed to fetch bookmaker odds: {e}")
+    if bookmaker_data:
+        for side, team_name in [("home", home_nickname), ("away", away_nickname)]:
+            opp_name = away_nickname if side == "home" else home_nickname
+            for p in predictions[side]:
+                bk_list = lookup_bookmaker_odds(bookmaker_data, team_name, opp_name, p["name"])
+                if bk_list:
+                    p["bookmaker_odds"] = bk_list
 
-    # Win prediction
     win_prediction = predict_win_probability(
         home_nickname, away_nickname,
         stats.get("home", {}), stats.get("away", {}),
@@ -530,25 +434,21 @@ async def get_match_by_url(url: str, version: int = 2):
         ground_conditions=match_ground,
     )
 
-    # Multi suggestion (best 3-player anytime try scorer multi)
     multi = generate_multi_suggestion(
         predictions["home"], predictions["away"],
         home_nickname, away_nickname,
     )
 
-    # Team summaries
     home_summary = generate_team_summary(home_nickname, model_version,
                                           before_season=before_season, before_round=before_round)
     away_summary = generate_team_summary(away_nickname, model_version,
                                           before_season=before_season, before_round=before_round)
 
-    # Value picks
     value_picks_home = find_value_picks(predictions["home"], away_nickname, home_nickname,
                                          before_season=before_season, before_round=before_round)
     value_picks_away = find_value_picks(predictions["away"], home_nickname, away_nickname,
                                          before_season=before_season, before_round=before_round)
 
-    # Top 3 per team
     top3_home = [
         {"name": p["name"], "number": p["number"], "position": p["position"], "try_percentage": p["try_percentage"]}
         for p in predictions["home"][:3]
@@ -558,7 +458,6 @@ async def get_match_by_url(url: str, version: int = 2):
         for p in predictions["away"][:3]
     ]
 
-    # Scoring for completed matches
     scoring = parse_scoring(raw) if is_completed else None
 
     if scoring:
@@ -568,21 +467,16 @@ async def get_match_by_url(url: str, version: int = 2):
             pick["scored"] = pick["name"] in home_actual
         for pick in top3_away:
             pick["scored"] = pick["name"] in away_actual
-        # Check multi picks against actuals
         all_actual = home_actual | away_actual
         multi_hits = sum(1 for p in multi["picks"] if p["name"] in all_actual)
         multi["hits"] = multi_hits
         multi["all_scored"] = multi_hits == len(multi["picks"])
         for p in multi["picks"]:
             p["scored"] = p["name"] in all_actual
-
-        # Check value picks against actuals
         for vp in value_picks_home:
             vp["scored"] = vp["name"] in home_actual
         for vp in value_picks_away:
             vp["scored"] = vp["name"] in away_actual
-
-        # Check win prediction
         if scoring["home_score"] is not None and scoring["away_score"] is not None:
             actual_winner = home_nickname if scoring["home_score"] > scoring["away_score"] else away_nickname
             if scoring["home_score"] == scoring["away_score"]:
@@ -590,9 +484,7 @@ async def get_match_by_url(url: str, version: int = 2):
             win_prediction["actual_winner"] = actual_winner
             win_prediction["correct"] = win_prediction["predicted_winner"] == actual_winner
 
-    # Record prediction for accuracy tracking (completed matches only)
     if is_completed and scoring and before_season and before_round:
-        import json
         try:
             t3h_json = json.dumps([{"name": p["name"], "scored": p.get("scored")} for p in top3_home])
             t3a_json = json.dumps([{"name": p["name"], "scored": p.get("scored")} for p in top3_away])
@@ -662,6 +554,45 @@ async def get_match_by_url(url: str, version: int = 2):
             "tries": get_total_try_count(),
         },
     }
+
+
+@app.get("/api/match")
+async def get_match_by_url(url: str, version: int = 2):
+
+    if not url.startswith("/draw/"):
+        raise HTTPException(status_code=400, detail="Invalid match URL path")
+
+    model_version = max(1, min(version, 2))
+
+    raw = await fetch_match_detail(url)
+    if raw is None:
+        raise HTTPException(status_code=502, detail="Could not fetch match data from NRL")
+
+    home_players = parse_team_list(raw, "homeTeam")
+    away_players = parse_team_list(raw, "awayTeam")
+
+    if not home_players and not away_players:
+        raise HTTPException(
+            status_code=403,
+            detail="Team lists have not been announced for this match yet"
+        )
+
+    # Fetch bookmaker odds (async) before running sync computation
+    match_state = raw.get("matchState", "")
+    is_completed = match_state in ("FullTime", "PostMatch")
+    bookmaker_data = {}
+    if has_odds_api_key() and not is_completed:
+        try:
+            bookmaker_data = await fetch_bookmaker_odds()
+        except Exception as e:
+            logger.warning(f"Failed to fetch bookmaker odds: {e}")
+
+    # Run all heavy DB/model computation in a thread
+    result = await asyncio.to_thread(
+        _compute_match_detail, url, raw, home_players, away_players,
+        model_version, bookmaker_data, is_completed, match_state
+    )
+    return result
 
 
 def _build_odds_comparison(home_odds_str, away_odds_str, home_model_prob, away_model_prob):

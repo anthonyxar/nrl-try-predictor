@@ -20,6 +20,7 @@ from database import (
     get_team_tries_conceded_by_edge,
     get_player_recent_form,
     get_venue_stats,
+    clear_query_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -836,6 +837,7 @@ def generate_team_summary(team_name: str, model_version: int = 2,
 
 
 def invalidate_cache():
-    """Clear the position rates cache (call after scraping)."""
+    """Clear all caches (call after scraping)."""
     global _position_rates_cache
     _position_rates_cache = None
+    clear_query_cache()

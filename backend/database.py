@@ -1,11 +1,14 @@
 """
 PostgreSQL (Supabase) database for storing historical NRL match and try-scoring data.
-Uses psycopg2 with connection pooling.
+Uses psycopg2 with connection pooling and in-memory TTL caching to reduce
+round-trip latency to remote databases.
 """
 
 import os
 import logging
 import atexit
+import time
+import threading
 
 import decimal
 
@@ -15,6 +18,45 @@ import psycopg2.extras
 import psycopg2.extensions
 
 logger = logging.getLogger(__name__)
+
+# --- In-memory TTL cache to reduce round-trips to remote Supabase ---
+_query_cache = {}
+_cache_lock = threading.Lock()
+CACHE_TTL = 300  # 5 minutes
+
+
+def _cache_key(func_name, *args, **kwargs):
+    """Build a hashable cache key from function name and arguments."""
+    kw_tuple = tuple(sorted(kwargs.items()))
+    return (func_name, args, kw_tuple)
+
+
+def _cached_query(func_name, ttl=CACHE_TTL):
+    """Decorator that caches DB query results for `ttl` seconds."""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            key = _cache_key(func_name, *args, **kwargs)
+            now = time.monotonic()
+            with _cache_lock:
+                if key in _query_cache:
+                    val, ts = _query_cache[key]
+                    if now - ts < ttl:
+                        return val
+            result = func(*args, **kwargs)
+            with _cache_lock:
+                _query_cache[key] = (result, now)
+            return result
+        wrapper.__name__ = func.__name__
+        return wrapper
+    return decorator
+
+
+def clear_query_cache():
+    """Clear all cached query results (call after scraping)."""
+    global _query_cache
+    with _cache_lock:
+        _query_cache.clear()
+
 
 # Make psycopg2 return float instead of Decimal for numeric/real columns
 DEC2FLOAT = psycopg2.extensions.new_type(
@@ -389,6 +431,7 @@ def _temporal_filter(alias="m", before_season=None, before_round=None):
     )
 
 
+@_cached_query("player_try_history")
 def get_player_try_history(player_name: str, before_season=None, before_round=None) -> list:
     """Get all matches where a player was listed and whether they scored."""
     tf, tp = _temporal_filter("m", before_season, before_round)
@@ -408,6 +451,7 @@ def get_player_try_history(player_name: str, before_season=None, before_round=No
     return [dict(r) for r in rows]
 
 
+@_cached_query("position_try_rates")
 def get_position_try_rates() -> dict:
     """
     Calculate historical try-scoring rate by position.
@@ -443,6 +487,7 @@ def get_position_try_rates() -> dict:
     return result
 
 
+@_cached_query("team_attack_defence")
 def get_team_attack_defence(team_name: str, last_n_games: int = 10, before_season=None, before_round=None) -> dict:
     """Get a team's recent attack/defence stats.
     Returns both full window (last_n_games) and recent window (last 5)
@@ -509,6 +554,7 @@ def get_team_attack_defence(team_name: str, last_n_games: int = 10, before_seaso
     }
 
 
+@_cached_query("h2h_record")
 def get_h2h_record(team_a: str, team_b: str, before_season=None, before_round=None) -> dict:
     """Get head-to-head record between two teams."""
     tf, tp = _temporal_filter("matches", before_season, before_round)
@@ -540,6 +586,7 @@ def get_h2h_record(team_a: str, team_b: str, before_season=None, before_round=No
     return {"team_a_wins": a_wins, "team_b_wins": b_wins, "played": len(rows)}
 
 
+@_cached_query("home_away_win_rate")
 def get_home_away_win_rate(team_name: str, before_season=None, before_round=None) -> dict:
     """Get a team's home and away win rates."""
     tf, tp = _temporal_filter("matches", before_season, before_round)
@@ -571,6 +618,7 @@ def get_home_away_win_rate(team_name: str, before_season=None, before_round=None
     }
 
 
+@_cached_query("team_tries_conceded_by_position")
 def get_team_tries_conceded_by_position(team_name: str, last_n_games: int = 15, before_season=None, before_round=None) -> dict:
     """
     Get how many tries a team concedes to each position.
@@ -640,6 +688,7 @@ def get_team_tries_conceded_by_position(team_name: str, last_n_games: int = 15, 
     return result
 
 
+@_cached_query("team_tries_conceded_by_edge")
 def get_team_tries_conceded_by_edge(team_name: str, last_n_games: int = 15, before_season=None, before_round=None) -> dict:
     """
     Get how many tries a team concedes on each edge (left / right / middle).
@@ -714,6 +763,7 @@ def get_team_tries_conceded_by_edge(team_name: str, last_n_games: int = 15, befo
     return result
 
 
+@_cached_query("player_recent_form")
 def get_player_recent_form(player_name: str, last_n_games: int = 5, before_season=None, before_round=None) -> dict:
     """
     Get a player's recent try-scoring form.
@@ -846,6 +896,7 @@ def get_incomplete_match_urls_for_round(season: int, round_number: int) -> list:
     return [r["match_url"] for r in rows]
 
 
+@_cached_query("total_match_count", ttl=60)
 def get_total_match_count() -> int:
     conn = get_db()
     row = conn.execute("SELECT COUNT(*) as cnt FROM matches WHERE match_state='FullTime'").fetchone()
@@ -853,6 +904,7 @@ def get_total_match_count() -> int:
     return row["cnt"]
 
 
+@_cached_query("total_try_count", ttl=60)
 def get_total_try_count() -> int:
     conn = get_db()
     row = conn.execute("SELECT COUNT(*) as cnt FROM tries").fetchone()
@@ -1106,6 +1158,7 @@ def get_accuracy_stats(model_version: int = None, season: int = None) -> dict:
 # ---- Venue/weather stats ----
 
 
+@_cached_query("venue_stats")
 def get_venue_stats(venue_name: str, team_name: str = None) -> dict:
     """Get win rate and scoring stats at a specific venue, optionally for a specific team."""
     conn = get_db()

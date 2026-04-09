@@ -373,6 +373,11 @@ def run_scraper():
     asyncio.run(scrape_all())
 
 
+def run_sync_current_season():
+    """Synchronous wrapper to run the async current season sync."""
+    asyncio.run(sync_current_season())
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     run_scraper()
