@@ -2,7 +2,9 @@ name: Scrape NRL Data
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    # Every 30 minutes, Thursday through Monday (NRL game days)
+    # Cron day-of-week: 0=Sun, 1=Mon, 4=Thu, 5=Fri, 6=Sat
+    - cron: '*/30 * * * 0,1,4,5,6'
   workflow_dispatch:  # Allow manual trigger
 
 jobs:

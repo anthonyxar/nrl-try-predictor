@@ -10,7 +10,7 @@ import logging
 import time
 
 from database import (
-    init_db, is_round_scraped, mark_round_scraped, unmark_round,
+    init_db, get_db, is_round_scraped, mark_round_scraped,
     insert_match, bulk_insert_match_data, get_total_match_count,
 )
 
@@ -302,8 +302,7 @@ async def scrape_match_detail(client: httpx.AsyncClient, match_id: int,
     weather = data.get("weather", "")
     ground_conditions = data.get("groundConditions", "")
     if weather or ground_conditions:
-        from database import get_db as _get_db
-        _conn = _get_db()
+        _conn = get_db()
         _conn.execute(
             "UPDATE matches SET weather=%s, ground_conditions=%s WHERE id=%s",
             (weather or "", ground_conditions or "", match_id)
@@ -319,36 +318,61 @@ CURRENT_SEASON = 2026
 CURRENT_SEASON_ROUNDS = 27
 
 
+def _match_exists(match_url: str) -> bool:
+    """Check if a match is already stored in the database."""
+    conn = get_db()
+    row = conn.execute("SELECT 1 FROM matches WHERE match_url=%s", (match_url,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+async def _scrape_single_match(client, season, round_number, match):
+    """Scrape and store a single completed match."""
+    home = match.get("homeTeam", {})
+    away = match.get("awayTeam", {})
+    clock = match.get("clock", {})
+    match_url = match.get("matchCentreUrl", "")
+    match_state = match.get("matchState", "")
+    round_title = match.get("roundTitle", f"Round {round_number}")
+    home_team = home.get("nickName", "Unknown")
+    away_team = away.get("nickName", "Unknown")
+    home_score = home.get("score")
+    away_score = away.get("score")
+    venue = match.get("venue", "")
+    venue_city = match.get("venueCity", "")
+    kickoff = clock.get("kickOffTimeLong", "") if isinstance(clock, dict) else ""
+
+    match_id = insert_match(
+        season, round_number, round_title, match_url, match_state,
+        home_team, away_team, home_score, away_score, venue, kickoff,
+        venue_city=venue_city
+    )
+    if not match_id:
+        return
+
+    logger.info(f"New match: {home_team} vs {away_team} (R{round_number})")
+    try:
+        await scrape_match_detail(client, match_id, match_url, home_team, away_team)
+    except Exception as e:
+        logger.error(f"Error fetching detail for {match_url}: {e}")
+
+
 async def sync_current_season():
     """
     Incrementally sync the current season.
-    Only fetches rounds that have new completed matches since last scrape.
-    Searches forward from the last scraped round instead of backwards from the end.
+    Only processes newly completed matches that don't already exist in the DB.
+    Skips fully-scraped rounds entirely. Stops at the first round with no completed matches.
     """
     init_db()
     logger.info("Starting current season sync...")
+    new_matches = 0
 
     async with httpx.AsyncClient(headers=HEADERS, timeout=20.0, follow_redirects=True) as client:
-        # Find the first unscraped round (search forward — much faster)
-        first_unscraped = None
         for rnd in range(1, CURRENT_SEASON_ROUNDS + 1):
-            if not is_round_scraped(CURRENT_SEASON, rnd):
-                first_unscraped = rnd
-                break
+            # Skip rounds already fully scraped — they won't change
+            if is_round_scraped(CURRENT_SEASON, rnd):
+                continue
 
-        # Also always re-check the last 2 scraped rounds for newly completed matches
-        latest_scraped = (first_unscraped - 1) if first_unscraped else CURRENT_SEASON_ROUNDS
-        start_recheck = max(1, latest_scraped - 1)
-
-        # Rounds to sync: re-check recent + any unscraped going forward
-        rounds_to_sync = set(range(start_recheck, latest_scraped + 1))
-
-        # Add unscraped rounds until we hit one with no completed matches
-        if first_unscraped:
-            for rnd in range(first_unscraped, min(first_unscraped + 3, CURRENT_SEASON_ROUNDS + 1)):
-                rounds_to_sync.add(rnd)
-
-        for rnd in sorted(rounds_to_sync):
             url = f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={CURRENT_SEASON}&round={rnd}"
             try:
                 resp = await client.get(url)
@@ -356,36 +380,39 @@ async def sync_current_season():
                     continue
                 data = resp.json()
                 fixtures = data.get("fixtures", [])
+                if not fixtures:
+                    continue
 
-                # Check if this round has any completed matches
                 completed = [f for f in fixtures if isinstance(f, dict)
                              and f.get("matchState") in ("FullTime", "PostMatch")]
                 if not completed:
-                    logger.info(f"Round {rnd} has no completed matches, stopping.")
+                    logger.info(f"Round {rnd}: no completed matches yet, stopping.")
                     break
 
-                # Check if all matches are completed (fully done round)
+                # Only scrape matches whose match_url is NOT already in the DB
+                for match in completed:
+                    match_url = match.get("matchCentreUrl", "")
+                    if not match_url or _match_exists(match_url):
+                        continue
+                    # New completed match — scrape it
+                    await _scrape_single_match(client, CURRENT_SEASON, rnd, match)
+                    new_matches += 1
+                    await asyncio.sleep(0.3)
+
+                # If every match in the round is completed, mark it so we never check again
                 all_done = all(
                     f.get("matchState") in ("FullTime", "PostMatch")
                     for f in fixtures if isinstance(f, dict)
                 )
-
-                # Only re-scrape if round is not fully done yet, or was never scraped
-                if not is_round_scraped(CURRENT_SEASON, rnd) or not all_done:
-                    logger.info(f"Syncing {CURRENT_SEASON} round {rnd} ({len(completed)} completed matches)...")
-                    unmark_round(CURRENT_SEASON, rnd)
-                    await scrape_round(client, CURRENT_SEASON, rnd)
-                    if all_done:
-                        mark_round_scraped(CURRENT_SEASON, rnd)
-                else:
-                    logger.info(f"Round {rnd} already fully scraped, skipping.")
+                if all_done:
+                    mark_round_scraped(CURRENT_SEASON, rnd)
+                    logger.info(f"Round {rnd}: all matches done, marked as fully scraped.")
 
             except Exception as e:
                 logger.error(f"Error syncing {CURRENT_SEASON} R{rnd}: {e}")
-            await asyncio.sleep(0.3)
 
     count = get_total_match_count()
-    logger.info(f"Sync complete. Database now has {count} completed matches.")
+    logger.info(f"Sync complete. {new_matches} new matches added. DB total: {count}.")
 
 
 def run_scraper():
