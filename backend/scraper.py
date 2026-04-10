@@ -321,48 +321,68 @@ CURRENT_SEASON_ROUNDS = 27
 
 async def sync_current_season():
     """
-    Re-scrape recent rounds of the current season to pick up
-    newly completed games (e.g. last night's results).
-    Unmarks the last 3 rounds and re-scrapes them.
+    Incrementally sync the current season.
+    Only fetches rounds that have new completed matches since last scrape.
+    Searches forward from the last scraped round instead of backwards from the end.
     """
     init_db()
     logger.info("Starting current season sync...")
 
-    # Find the approximate current round by checking which rounds have data
     async with httpx.AsyncClient(headers=HEADERS, timeout=20.0, follow_redirects=True) as client:
-        # Check rounds from the end backwards to find the latest active round
-        latest_round = 1
-        for rnd in range(CURRENT_SEASON_ROUNDS, 0, -1):
+        # Find the first unscraped round (search forward — much faster)
+        first_unscraped = None
+        for rnd in range(1, CURRENT_SEASON_ROUNDS + 1):
+            if not is_round_scraped(CURRENT_SEASON, rnd):
+                first_unscraped = rnd
+                break
+
+        # Also always re-check the last 2 scraped rounds for newly completed matches
+        latest_scraped = (first_unscraped - 1) if first_unscraped else CURRENT_SEASON_ROUNDS
+        start_recheck = max(1, latest_scraped - 1)
+
+        # Rounds to sync: re-check recent + any unscraped going forward
+        rounds_to_sync = set(range(start_recheck, latest_scraped + 1))
+
+        # Add unscraped rounds until we hit one with no completed matches
+        if first_unscraped:
+            for rnd in range(first_unscraped, min(first_unscraped + 3, CURRENT_SEASON_ROUNDS + 1)):
+                rounds_to_sync.add(rnd)
+
+        for rnd in sorted(rounds_to_sync):
             url = f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={CURRENT_SEASON}&round={rnd}"
             try:
                 resp = await client.get(url)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    fixtures = data.get("fixtures", [])
-                    has_completed = any(
-                        f.get("matchState") in ("FullTime", "PostMatch")
-                        for f in fixtures if isinstance(f, dict)
-                    )
-                    if has_completed:
-                        latest_round = rnd
-                        break
-            except Exception:
-                continue
-            await asyncio.sleep(0.2)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                fixtures = data.get("fixtures", [])
 
-        # Re-scrape the last 3 rounds (covers current + recent)
-        start_round = max(1, latest_round - 2)
-        end_round = min(CURRENT_SEASON_ROUNDS, latest_round + 1)
+                # Check if this round has any completed matches
+                completed = [f for f in fixtures if isinstance(f, dict)
+                             and f.get("matchState") in ("FullTime", "PostMatch")]
+                if not completed:
+                    logger.info(f"Round {rnd} has no completed matches, stopping.")
+                    break
 
-        for rnd in range(start_round, end_round + 1):
-            logger.info(f"Syncing {CURRENT_SEASON} round {rnd}...")
-            unmark_round(CURRENT_SEASON, rnd)
-            try:
-                await scrape_round(client, CURRENT_SEASON, rnd)
-                mark_round_scraped(CURRENT_SEASON, rnd)
+                # Check if all matches are completed (fully done round)
+                all_done = all(
+                    f.get("matchState") in ("FullTime", "PostMatch")
+                    for f in fixtures if isinstance(f, dict)
+                )
+
+                # Only re-scrape if round is not fully done yet, or was never scraped
+                if not is_round_scraped(CURRENT_SEASON, rnd) or not all_done:
+                    logger.info(f"Syncing {CURRENT_SEASON} round {rnd} ({len(completed)} completed matches)...")
+                    unmark_round(CURRENT_SEASON, rnd)
+                    await scrape_round(client, CURRENT_SEASON, rnd)
+                    if all_done:
+                        mark_round_scraped(CURRENT_SEASON, rnd)
+                else:
+                    logger.info(f"Round {rnd} already fully scraped, skipping.")
+
             except Exception as e:
                 logger.error(f"Error syncing {CURRENT_SEASON} R{rnd}: {e}")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
     count = get_total_match_count()
     logger.info(f"Sync complete. Database now has {count} completed matches.")

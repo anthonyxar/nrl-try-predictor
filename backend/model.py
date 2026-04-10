@@ -12,6 +12,7 @@ import logging
 from database import (
     get_position_try_rates,
     get_player_try_history,
+    get_players_try_histories_batch,
     get_team_attack_defence,
     get_h2h_record,
     get_home_away_win_rate,
@@ -19,6 +20,7 @@ from database import (
     get_team_tries_conceded_by_position,
     get_team_tries_conceded_by_edge,
     get_player_recent_form,
+    get_players_recent_form_batch,
     get_venue_stats,
     clear_query_cache,
 )
@@ -174,8 +176,39 @@ def _get_player_try_factor(player_name: str, position: str, model_version: int =
     return max(0.4, min(factor, 2.5))
 
 
-def predict_try_probability(
+def _get_player_try_factor_from_history(history: list, position: str, model_version: int = 2) -> float:
+    """Same as _get_player_try_factor but uses pre-fetched history to avoid DB calls."""
+    if not history or len(history) < 3:
+        return 1.0
+
+    rates = _get_position_rates()
+    expected_rate = _match_position(position, rates)
+    if expected_rate <= 0:
+        return 1.0
+
+    total_games = len(history)
+    total_tries = sum(h["tries_scored"] for h in history)
+    career_rate = total_tries / total_games if total_games > 0 else 0
+
+    if model_version >= 2:
+        recent = history[-5:]
+        recent_games = len(recent)
+        recent_tries = sum(h["tries_scored"] for h in recent)
+        recent_rate = recent_tries / recent_games if recent_games > 0 else 0
+        if recent_games >= 3:
+            blended_rate = recent_rate * 0.6 + career_rate * 0.4
+        else:
+            blended_rate = career_rate
+    else:
+        blended_rate = career_rate
+
+    factor = blended_rate / expected_rate
+    return max(0.4, min(factor, 2.5))
+
+
+def _predict_try_with_history(
     player: dict,
+    history: list,
     team_name: str,
     opp_name: str,
     is_home: bool,
@@ -183,23 +216,18 @@ def predict_try_probability(
     opp_defence: dict,
     opp_edge_vulnerability: dict = None,
     model_version: int = 2,
-    before_season=None,
-    before_round=None,
     weather: str = "",
     ground_conditions: str = "",
 ) -> float:
-    """Calculate probability a player scores at least one try."""
+    """Like predict_try_probability but uses pre-fetched player history (no DB call)."""
     position = player.get("position", "Interchange")
     is_bench = player.get("is_interchange", False) or player.get("number", 0) >= 14
     jersey = player.get("number", 0)
 
-    # Base rate from historical data
     rates = _get_position_rates()
     base_rate = _match_position(position, rates)
 
-    # Player-specific factor from their own history
-    player_factor = _get_player_try_factor(player["name"], position, model_version,
-                                            before_season, before_round)
+    player_factor = _get_player_try_factor_from_history(history, position, model_version)
     rate = base_rate * player_factor
 
     if model_version >= 2:
@@ -463,7 +491,6 @@ def generate_predictions(
     away_attack = get_team_attack_defence(away_team_name, last_n_games=10,
                                            before_season=before_season, before_round=before_round)
 
-    # If DB is empty, fall back to current season stats from NRL API
     if home_attack["played"] == 0:
         home_attack["avg_scored"] = home_stats.get("avg_points_scored", LEAGUE_AVG_PPG)
         home_attack["avg_conceded"] = home_stats.get("avg_points_conceded", LEAGUE_AVG_PPG)
@@ -471,7 +498,6 @@ def generate_predictions(
         away_attack["avg_scored"] = away_stats.get("avg_points_scored", LEAGUE_AVG_PPG)
         away_attack["avg_conceded"] = away_stats.get("avg_points_conceded", LEAGUE_AVG_PPG)
 
-    # Get edge vulnerability data for both opponents (V2 only)
     if model_version >= 2:
         away_edge_vuln = get_team_tries_conceded_by_edge(away_team_name, last_n_games=15,
                                                           before_season=before_season, before_round=before_round)
@@ -481,13 +507,17 @@ def generate_predictions(
         away_edge_vuln = None
         home_edge_vuln = None
 
+    # Batch-fetch all player histories in ONE query instead of 34+ individual queries
+    all_player_names = [p["name"] for p in home_players + away_players if p.get("name")]
+    _histories = get_players_try_histories_batch(all_player_names, before_season, before_round)
+
     def process_team(players, team_name, opp_name, is_home, team_atk, opp_atk, opp_edge):
         results = []
         for p in players:
-            prob = predict_try_probability(
-                p, team_name, opp_name, is_home, team_atk, opp_atk, opp_edge,
+            prob = _predict_try_with_history(
+                p, _histories.get(p["name"], []),
+                team_name, opp_name, is_home, team_atk, opp_atk, opp_edge,
                 model_version=model_version,
-                before_season=before_season, before_round=before_round,
                 weather=weather, ground_conditions=ground_conditions,
             )
             jersey = p.get("number", 0)
@@ -629,34 +659,32 @@ def find_value_picks(predictions: list, opp_team_name: str, team_nickname: str,
             return "Lock"
         return pos
 
-    value_picks = []
-    # Skip top 3, look at players ranked 4+
+    # Pre-filter candidates with vulnerability, then batch-fetch their recent form
+    candidates = []
     for rank, player in enumerate(predictions[3:], start=4):
         pos = normalise_pos(player.get("position", ""))
         if not pos or pos in ("Interchange", "Reserve", ""):
             continue
-
         jersey = player.get("number", 0)
-
-        # Check opponent vulnerability at this position
         vuln = opp_vulnerabilities.get(pos, {})
         vulnerability = vuln.get("vulnerability", 1.0)
-
-        # Check opponent edge vulnerability for this player's field side
         player_edge = JERSEY_FIELD_SIDE.get(jersey, "") if 1 <= jersey <= 13 else ""
         edge_info = opp_edge_vuln.get(player_edge, {}) if player_edge else {}
-        edge_vuln = edge_info.get("vulnerability", 1.0)
-
-        # Need at least one form of vulnerability
+        edge_vuln_val = edge_info.get("vulnerability", 1.0)
         has_pos_vuln = vulnerability >= 1.15
-        has_edge_vuln = edge_vuln >= 1.15
-
+        has_edge_vuln = edge_vuln_val >= 1.15
         if not has_pos_vuln and not has_edge_vuln:
             continue
+        candidates.append((rank, player, pos, vulnerability, vuln, player_edge, edge_info, edge_vuln_val, has_pos_vuln, has_edge_vuln))
 
-        # Check player's recent form
-        form = get_player_recent_form(player["name"], last_n_games=5,
-                                      before_season=before_season, before_round=before_round)
+    # Batch-fetch recent form for all candidates in ONE query
+    candidate_names = [c[1]["name"] for c in candidates]
+    all_form = get_players_recent_form_batch(candidate_names, last_n_games=5,
+                                              before_season=before_season, before_round=before_round)
+
+    value_picks = []
+    for rank, player, pos, vulnerability, vuln, player_edge, edge_info, edge_vuln, has_pos_vuln, has_edge_vuln in candidates:
+        form = all_form.get(player["name"], {"games": 0, "tries": 0, "rate": 0, "streak": 0})
         if form["games"] == 0:
             continue
 
