@@ -177,6 +177,9 @@ def init_db():
             away_score INTEGER,
             venue TEXT,
             kickoff TEXT,
+            venue_city TEXT DEFAULT '',
+            weather TEXT DEFAULT '',
+            ground_conditions TEXT DEFAULT '',
             UNIQUE(season, round_number, home_team, away_team)
         )
     """)
@@ -203,6 +206,7 @@ def init_db():
             side TEXT NOT NULL,
             player_name TEXT NOT NULL,
             minute TEXT,
+            field_side TEXT DEFAULT '',
             FOREIGN KEY (match_id) REFERENCES matches(id)
         )
     """)
