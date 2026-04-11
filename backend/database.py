@@ -233,18 +233,21 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_state_season ON matches(match_state, season DESC, round_number DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_players_name_match ON players(name, match_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_match_player_side ON tries(match_id, player_name, side)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_match_side_field ON tries(match_id, side, field_side)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_matches_venue_state ON matches(venue, match_state)")
 
     conn.commit()
 
-    # Migration: add field_side column to tries
+    # Migration: add field_side column to tries (for DBs created before it was in CREATE TABLE)
     try:
         conn.execute("ALTER TABLE tries ADD COLUMN field_side TEXT DEFAULT ''")
         conn.commit()
         logger.info("Migration: added field_side column to tries table")
     except psycopg2.errors.DuplicateColumn:
-        conn.rollback()  # must rollback the failed transaction in PostgreSQL
+        conn.rollback()
+
+    # Index that depends on field_side column — must come after migration
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tries_match_side_field ON tries(match_id, side, field_side)")
+    conn.commit()
 
     # Interchanges table
     conn.execute("""
