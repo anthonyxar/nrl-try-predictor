@@ -1926,6 +1926,51 @@ def get_player_quality_adjusted_tries(player_name: str, before_season=None, befo
     return round(total_weighted_rate / total_weight, 3)
 
 
+def get_quality_adjusted_tries_batch(player_names: list, before_season=None, before_round=None) -> dict:
+    """Batch version of get_player_quality_adjusted_tries.
+    Returns {player_name: quality_adjusted_rate} for all players with enough data."""
+    if not player_names:
+        return {}
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    placeholders = ", ".join(["%s"] * len(player_names))
+    rows = conn.execute(f"""
+        SELECT p.name, p.side, p.match_id,
+               m.home_team, m.away_team, m.home_score, m.away_score,
+               (SELECT COUNT(*) FROM tries t WHERE t.match_id = p.match_id AND t.player_name = p.name) as tries_scored
+        FROM players p
+        JOIN matches m ON m.id = p.match_id
+        WHERE p.name IN ({placeholders}) AND m.match_state = 'FullTime'{tf}
+        ORDER BY m.season DESC, m.round_number DESC
+    """, (*player_names, *tp)).fetchall()
+    conn.close()
+
+    # Group by player, keep last 20 per player
+    player_rows = {}
+    for r in rows:
+        name = r["name"]
+        if name not in player_rows:
+            player_rows[name] = []
+        if len(player_rows[name]) < 20:
+            player_rows[name].append(r)
+
+    result = {}
+    for name, prows in player_rows.items():
+        if len(prows) < 3:
+            continue
+        total_weighted_rate = 0
+        total_weight = 0
+        for r in prows:
+            opp_conceded = r["home_score"] if r["side"] == "away" else r["away_score"]
+            defence_quality = max(0.5, min(22.0 / max(opp_conceded, 4), 2.0))
+            tries = r["tries_scored"] or 0
+            total_weighted_rate += tries * defence_quality
+            total_weight += defence_quality
+        if total_weight > 0:
+            result[name] = round(total_weighted_rate / total_weight, 3)
+    return result
+
+
 def get_weather_scoring_impact() -> dict:
     """Get average tries per game under different weather/ground conditions vs overall."""
     conn = get_db()

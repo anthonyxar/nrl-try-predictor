@@ -5,7 +5,8 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -270,6 +271,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/api/health":
+            response.headers["Cache-Control"] = "no-cache"
+        elif path.startswith("/api/match"):
+            # Match detail: short cache for upcoming, long for completed
+            response.headers["Cache-Control"] = "public, max-age=120, stale-while-revalidate=300"
+        elif path.startswith("/api/rounds/"):
+            # Round page: 2 min cache, serve stale while revalidating
+            response.headers["Cache-Control"] = "public, max-age=120, stale-while-revalidate=300"
+        elif path.startswith("/api/rounds"):
+            # Rounds list: changes rarely
+            response.headers["Cache-Control"] = "public, max-age=600"
+        elif path.startswith("/api/accuracy"):
+            response.headers["Cache-Control"] = "public, max-age=300"
+        elif path.startswith("/api/team") or path.startswith("/api/player"):
+            response.headers["Cache-Control"] = "public, max-age=300"
+        return response
+
+
+app.add_middleware(CacheControlMiddleware)
+
+
+@app.get("/api/health")
+async def health_check():
+    """Lightweight health check — keeps Render from sleeping."""
+    return {"status": "ok"}
 
 
 @app.get("/api/status")

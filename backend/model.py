@@ -38,7 +38,7 @@ from database import (
     get_player_try_minutes_batch,
     get_bench_minutes_batch,
     get_calibration_data,
-    get_player_quality_adjusted_tries,
+    get_quality_adjusted_tries_batch,
 )
 
 logger = logging.getLogger(__name__)
@@ -636,12 +636,8 @@ def generate_predictions(
         bench_names = [p["name"] for p in home_players + away_players
                        if p.get("name") and (p.get("is_interchange") or p.get("number", 0) >= 14)]
         bench_mins = get_bench_minutes_batch(bench_names, before_season, before_round) if bench_names else {}
-        # Quality-adjusted try rates for all players
-        quality_adj = {}
-        for name in all_player_names:
-            qa = get_player_quality_adjusted_tries(name, before_season, before_round)
-            if qa >= 0:
-                quality_adj[name] = qa
+        # Quality-adjusted try rates for all players (single batch query)
+        quality_adj = get_quality_adjusted_tries_batch(all_player_names, before_season, before_round)
 
         home_margin = get_team_margin_weighted_form(home_team_name, last_n_games=10,
                                                      before_season=before_season, before_round=before_round)
