@@ -56,16 +56,24 @@ export default function AccuracyDashboard({ apiBase }) {
         <div className="version-btn-wrap">
           <button className={`version-btn ${modelFilter === 2 ? 'active' : ''}`}
             onClick={() => setModelFilter(2)}>
-            V2 <span className="version-desc">Full Model</span>
+            V2 <span className="version-desc">Enhanced</span>
           </button>
           <div className="version-tooltip">
-            <strong>Version 2 — Full Model</strong>
+            <strong>Version 2 — Enhanced Model</strong>
             <ul>
-              <li>Player try factor blends 60% last 5 games / 40% career</li>
-              <li>Team attack/defence blends 60% last 5 / 40% last 10 games</li>
-              <li>Edge vulnerability: adjusts probability based on opponent's left/right/middle/fullback defensive weaknesses</li>
-              <li>Venue-specific home advantage based on team's record at that ground</li>
-              <li>Weather &amp; ground conditions: wet weather reduces try-scoring rates (backs affected more than forwards)</li>
+              <li>Recency-weighted form, edge vulnerability, venue-specific home advantage, weather impact</li>
+            </ul>
+          </div>
+        </div>
+        <div className="version-btn-wrap">
+          <button className={`version-btn ${modelFilter === 3 ? 'active' : ''}`}
+            onClick={() => setModelFilter(3)}>
+            V3 <span className="version-desc">Full Model</span>
+          </button>
+          <div className="version-tooltip">
+            <strong>Version 3 — Full Model</strong>
+            <ul>
+              <li>Margin-weighted form, rest days, bye-week boost, opponent-quality tries, interchange timing, calibration</li>
             </ul>
           </div>
         </div>

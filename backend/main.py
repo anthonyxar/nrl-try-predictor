@@ -88,7 +88,7 @@ async def _warm_cache():
         if target_raw and target_round:
             fixtures, _ = parse_fixtures(target_raw)
             logger.info(f"Warming cache for round {target_round} ({len(fixtures)} matches)...")
-            await asyncio.to_thread(_enrich_fixtures, fixtures, 2, target_round)
+            await asyncio.to_thread(_enrich_fixtures, fixtures, 3, target_round)
             logger.info(f"Cache warmed for round {target_round}.")
     except asyncio.CancelledError:
         pass
@@ -99,7 +99,7 @@ async def _warm_cache():
 PREDICTION_SYNC_INTERVAL = 600  # 10 minutes
 
 
-async def _record_prediction_for_match(match_url: str, model_version: int = 2):
+async def _record_prediction_for_match(match_url: str, model_version: int = 3):
     """Fetch a completed match from the NRL API, run predictions, and record accuracy."""
     import json
 
@@ -215,7 +215,7 @@ async def _record_prediction_for_match(match_url: str, model_version: int = 2):
 
 async def _backfill_predictions():
     """Record predictions for all completed matches that haven't been recorded yet."""
-    for mv in (1, 2):
+    for mv in (1, 2, 3):
         unrecorded = get_unrecorded_completed_matches(model_version=mv)
         if not unrecorded:
             continue
@@ -392,9 +392,9 @@ def _enrich_fixtures(fixtures, model_version, round_number):
 
 
 @app.get("/api/rounds/{round_number}")
-async def get_round(round_number: int, version: int = 2):
+async def get_round(round_number: int, version: int = 3):
 
-    model_version = max(1, min(version, 2))
+    model_version = max(1, min(version, 3))
     if round_number < 1 or round_number > TOTAL_ROUNDS:
         raise HTTPException(status_code=404, detail="Invalid round number")
 
@@ -636,12 +636,12 @@ def _compute_match_detail(url, raw, home_players, away_players,
 
 
 @app.get("/api/match")
-async def get_match_by_url(url: str, version: int = 2):
+async def get_match_by_url(url: str, version: int = 3):
 
     if not url.startswith("/draw/"):
         raise HTTPException(status_code=400, detail="Invalid match URL path")
 
-    model_version = max(1, min(version, 2))
+    model_version = max(1, min(version, 3))
 
     raw = await fetch_match_detail(url)
     if raw is None:
@@ -750,7 +750,7 @@ async def get_team(name: str, season: int = SEASON):
     edge_vuln = get_team_tries_conceded_by_edge(name, last_n_games=15)
     roster = get_team_roster(name, season=season)
     recent = get_team_recent_results(name, last_n=10)
-    summary = _gen_summary(name, model_version=2)
+    summary = _gen_summary(name, model_version=3)
 
     # Form string (W/L/D for last 10)
     form_str = [r["result"] for r in recent]

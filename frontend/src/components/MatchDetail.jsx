@@ -10,7 +10,7 @@ export default function MatchDetail({ apiBase }) {
   const [error, setError] = useState(null)
   const [viewMode, setViewMode] = useState('ranked')
   const [activeTab, setActiveTab] = useState('home')
-  const [modelVersion, setModelVersion] = useState(2)
+  const [modelVersion, setModelVersion] = useState(3)
   const [versionLoading, setVersionLoading] = useState(false)
 
   const roundMatch = matchUrl ? matchUrl.match(/round-(\d+)/) : null
@@ -118,16 +118,35 @@ export default function MatchDetail({ apiBase }) {
         <div className="version-btn-wrap">
           <button className={`version-btn ${modelVersion === 2 ? 'active' : ''}`}
             onClick={() => setModelVersion(2)} disabled={versionLoading}>
-            V2 <span className="version-desc">Full Model</span>
+            V2 <span className="version-desc">Enhanced</span>
           </button>
           <div className="version-tooltip">
-            <strong>Version 2 — Full Model</strong>
+            <strong>Version 2 — Enhanced Model</strong>
             <ul>
               <li>Player try factor blends 60% last 5 games / 40% career</li>
               <li>Team attack/defence blends 60% last 5 / 40% last 10 games</li>
-              <li>Edge vulnerability: adjusts probability based on opponent's left/right/middle/fullback defensive weaknesses</li>
+              <li>Edge vulnerability: adjusts probability based on opponent's defensive weaknesses</li>
               <li>Venue-specific home advantage based on team's record at that ground</li>
-              <li>Weather &amp; ground conditions: wet weather reduces try-scoring rates (backs affected more than forwards)</li>
+              <li>Weather &amp; ground conditions impact</li>
+            </ul>
+          </div>
+        </div>
+        <div className="version-btn-wrap">
+          <button className={`version-btn ${modelVersion === 3 ? 'active' : ''}`}
+            onClick={() => setModelVersion(3)} disabled={versionLoading}>
+            V3 <span className="version-desc">Full Model</span>
+          </button>
+          <div className="version-tooltip">
+            <strong>Version 3 — Full Model</strong>
+            <ul>
+              <li>All V2 features plus:</li>
+              <li>Margin-of-victory weighted form (quality of wins/losses)</li>
+              <li>Rest days &amp; short turnaround penalties</li>
+              <li>Bye-week freshness boost</li>
+              <li>Opponent-quality adjusted try rates</li>
+              <li>Interchange timing (actual bench minutes)</li>
+              <li>Season progression (early-round discount)</li>
+              <li>Probability calibration from historical accuracy</li>
             </ul>
           </div>
         </div>

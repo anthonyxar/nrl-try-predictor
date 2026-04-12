@@ -715,6 +715,47 @@ def prefetch_round_data(team_names: list, matchups: list, last_n_games: int = 10
         with _cache_lock:
             _query_cache[key] = (h2h_stats, now)
 
+    # Process margin-weighted form per team (V3)
+    import math
+    for team in team_names:
+        team_rows = [r for r in all_matches if r["home_team"] == team or r["away_team"] == team][:last_n_games]
+        if team_rows:
+            total_quality = 0
+            margins = []
+            blowout_wins = 0
+            close_losses = 0
+            for r in team_rows:
+                margin = (r["home_score"] - r["away_score"]) if r["home_team"] == team else (r["away_score"] - r["home_score"])
+                margins.append(margin)
+                total_quality += 1.0 / (1.0 + math.exp(-margin / 8.0))
+                if margin >= 18:
+                    blowout_wins += 1
+                if -6 <= margin < 0:
+                    close_losses += 1
+            mwf = {
+                "quality_score": round(total_quality / len(team_rows), 3),
+                "avg_margin": round(sum(margins) / len(margins), 1),
+                "blowout_wins": blowout_wins,
+                "close_losses": close_losses,
+            }
+        else:
+            mwf = {"quality_score": 0.5, "avg_margin": 0, "blowout_wins": 0, "close_losses": 0}
+        key = _cache_key("team_margin_weighted_form", team, last_n_games, before_season, before_round)
+        with _cache_lock:
+            _query_cache[key] = (mwf, now)
+
+    # Process bye-week detection per team (V3)
+    if before_season and before_round and before_round > 1:
+        prev_round = before_round - 1
+        for team in team_names:
+            had_bye = not any(
+                (r["home_team"] == team or r["away_team"] == team) and r["round_number"] == prev_round and r["season"] == before_season
+                for r in all_matches
+            )
+            key = _cache_key("team_had_bye", team, before_season, before_round)
+            with _cache_lock:
+                _query_cache[key] = (had_bye, now)
+
     # Process venue stats for each matchup
     for matchup in matchups:
         home = matchup[0]
@@ -1539,6 +1580,350 @@ def get_venue_stats(venue_name: str, team_name: str = None) -> dict:
         result["team_games"] = team_games
 
     return result
+
+
+# ---- V3 model queries ----
+
+
+@_cached_query("team_rest_days")
+def get_team_rest_days(team_name: str, season: int, round_number: int) -> int:
+    """Get days since team's last match. Returns -1 if unknown."""
+    conn = get_db()
+    row = conn.execute("""
+        SELECT kickoff FROM matches
+        WHERE (home_team = %s OR away_team = %s)
+          AND match_state = 'FullTime'
+          AND (season < %s OR (season = %s AND round_number < %s))
+        ORDER BY season DESC, round_number DESC
+        LIMIT 1
+    """, (team_name, team_name, season, season, round_number)).fetchone()
+    if not row or not row["kickoff"]:
+        conn.close()
+        return -1
+    # Also get current match kickoff
+    cur_row = conn.execute("""
+        SELECT kickoff FROM matches
+        WHERE (home_team = %s OR away_team = %s)
+          AND season = %s AND round_number = %s
+        LIMIT 1
+    """, (team_name, team_name, season, round_number)).fetchone()
+    conn.close()
+    if not cur_row or not cur_row["kickoff"]:
+        return -1
+    try:
+        from datetime import datetime
+        # Parse kickoff strings — format varies, try common patterns
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z",
+                    "%A %d %B %Y %I:%M%p", "%A, %B %d, %Y %I:%M %p"):
+            try:
+                prev = datetime.strptime(row["kickoff"][:19], fmt[:min(len(fmt), 19)])
+                curr = datetime.strptime(cur_row["kickoff"][:19], fmt[:min(len(fmt), 19)])
+                return max(0, (curr - prev).days)
+            except (ValueError, TypeError):
+                continue
+        return -1
+    except Exception:
+        return -1
+
+
+@_cached_query("team_margin_weighted_form")
+def get_team_margin_weighted_form(team_name: str, last_n_games: int = 10,
+                                   before_season=None, before_round=None) -> dict:
+    """Get margin-of-victory weighted form stats.
+    Returns quality_score: wins by large margins count more, losses by large margins count less."""
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    rows = conn.execute(f"""
+        SELECT home_team, away_team, home_score, away_score
+        FROM matches m
+        WHERE (m.home_team = %s OR m.away_team = %s)
+          AND m.match_state = 'FullTime' AND m.home_score IS NOT NULL{tf}
+        ORDER BY m.season DESC, m.round_number DESC
+        LIMIT %s
+    """, (team_name, team_name, *tp, last_n_games)).fetchall()
+    conn.close()
+
+    if not rows:
+        return {"quality_score": 0.5, "avg_margin": 0, "blowout_wins": 0, "close_losses": 0}
+
+    import math
+    total_quality = 0
+    margins = []
+    blowout_wins = 0
+    close_losses = 0
+    for r in rows:
+        if r["home_team"] == team_name:
+            margin = r["home_score"] - r["away_score"]
+        else:
+            margin = r["away_score"] - r["home_score"]
+        margins.append(margin)
+        # Sigmoid-like quality mapping: big wins → ~1.0, big losses → ~0.0
+        quality = 1.0 / (1.0 + math.exp(-margin / 8.0))
+        total_quality += quality
+        if margin >= 18:
+            blowout_wins += 1
+        if -6 <= margin < 0:
+            close_losses += 1
+
+    return {
+        "quality_score": round(total_quality / len(rows), 3),
+        "avg_margin": round(sum(margins) / len(margins), 1),
+        "blowout_wins": blowout_wins,
+        "close_losses": close_losses,
+    }
+
+
+@_cached_query("team_had_bye")
+def get_team_had_bye(team_name: str, season: int, round_number: int) -> bool:
+    """Check if the team had a bye in the previous round."""
+    if round_number <= 1:
+        return False
+    prev_round = round_number - 1
+    conn = get_db()
+    row = conn.execute("""
+        SELECT 1 FROM matches
+        WHERE (home_team = %s OR away_team = %s)
+          AND season = %s AND round_number = %s
+    """, (team_name, team_name, season, prev_round)).fetchone()
+    conn.close()
+    return row is None
+
+
+@_cached_query("player_try_minutes")
+def get_player_try_minute_profile(player_name: str, before_season=None, before_round=None) -> dict:
+    """Get a player's try-scoring distribution by match period (first/second half)."""
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    rows = conn.execute(f"""
+        SELECT t.minute
+        FROM tries t
+        JOIN matches m ON m.id = t.match_id
+        WHERE t.player_name = %s AND m.match_state = 'FullTime'{tf}
+    """, (player_name, *tp)).fetchall()
+    conn.close()
+
+    if not rows:
+        return {"total": 0, "first_half": 0, "second_half": 0, "first_half_rate": 0.5}
+
+    first_half = 0
+    second_half = 0
+    for r in rows:
+        try:
+            minute = int(str(r["minute"]).replace("'", "").strip())
+            if minute <= 40:
+                first_half += 1
+            else:
+                second_half += 1
+        except (ValueError, TypeError):
+            second_half += 1  # default to second half if unparseable
+
+    total = first_half + second_half
+    return {
+        "total": total,
+        "first_half": first_half,
+        "second_half": second_half,
+        "first_half_rate": round(first_half / total, 3) if total > 0 else 0.5,
+    }
+
+
+def get_player_try_minutes_batch(player_names: list, before_season=None, before_round=None) -> dict:
+    """Batch version of get_player_try_minute_profile."""
+    if not player_names:
+        return {}
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    placeholders = ", ".join(["%s"] * len(player_names))
+    rows = conn.execute(f"""
+        SELECT t.player_name, t.minute
+        FROM tries t
+        JOIN matches m ON m.id = t.match_id
+        WHERE t.player_name IN ({placeholders}) AND m.match_state = 'FullTime'{tf}
+    """, (*player_names, *tp)).fetchall()
+    conn.close()
+
+    profiles = {}
+    for r in rows:
+        name = r["player_name"]
+        if name not in profiles:
+            profiles[name] = {"first_half": 0, "second_half": 0}
+        try:
+            minute = int(str(r["minute"]).replace("'", "").strip())
+            if minute <= 40:
+                profiles[name]["first_half"] += 1
+            else:
+                profiles[name]["second_half"] += 1
+        except (ValueError, TypeError):
+            profiles[name]["second_half"] += 1
+
+    result = {}
+    for name in player_names:
+        p = profiles.get(name, {"first_half": 0, "second_half": 0})
+        total = p["first_half"] + p["second_half"]
+        result[name] = {
+            "total": total,
+            "first_half": p["first_half"],
+            "second_half": p["second_half"],
+            "first_half_rate": round(p["first_half"] / total, 3) if total > 0 else 0.5,
+        }
+    return result
+
+
+@_cached_query("player_avg_interchange_minutes")
+def get_player_avg_minutes(player_name: str, before_season=None, before_round=None) -> float:
+    """Estimate average minutes played for a bench player from interchange data.
+    Returns estimated minutes (0-80). Returns 80 for starters, ~30 for unknown bench."""
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    # Find games where this player came on as interchange
+    rows = conn.execute(f"""
+        SELECT i.game_seconds
+        FROM interchanges i
+        JOIN matches m ON m.id = i.match_id
+        WHERE i.player_on = %s AND m.match_state = 'FullTime'{tf}
+        ORDER BY m.season DESC, m.round_number DESC
+        LIMIT 10
+    """, (player_name, *tp)).fetchall()
+    conn.close()
+
+    if not rows:
+        return 30.0  # Default for unknown bench players
+
+    # Average entry time in minutes, then estimate minutes played = 80 - entry_time
+    entry_minutes = [r["game_seconds"] / 60.0 for r in rows if r["game_seconds"] is not None]
+    if not entry_minutes:
+        return 30.0
+    avg_entry = sum(entry_minutes) / len(entry_minutes)
+    return round(max(5, 80.0 - avg_entry), 1)
+
+
+def get_bench_minutes_batch(player_names: list, before_season=None, before_round=None) -> dict:
+    """Batch version: get estimated minutes for bench players."""
+    if not player_names:
+        return {}
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    placeholders = ", ".join(["%s"] * len(player_names))
+    rows = conn.execute(f"""
+        SELECT i.player_on, i.game_seconds
+        FROM interchanges i
+        JOIN matches m ON m.id = i.match_id
+        WHERE i.player_on IN ({placeholders}) AND m.match_state = 'FullTime'{tf}
+        ORDER BY m.season DESC, m.round_number DESC
+    """, (*player_names, *tp)).fetchall()
+    conn.close()
+
+    entries = {}
+    for r in rows:
+        name = r["player_on"]
+        if r["game_seconds"] is not None:
+            entries.setdefault(name, []).append(r["game_seconds"] / 60.0)
+
+    result = {}
+    for name in player_names:
+        if name in entries and entries[name]:
+            # Only use last 10 entries
+            recent = entries[name][:10]
+            avg_entry = sum(recent) / len(recent)
+            result[name] = round(max(5, 80.0 - avg_entry), 1)
+        else:
+            result[name] = 30.0
+    return result
+
+
+@_cached_query("calibration_curve")
+def get_calibration_data() -> dict:
+    """Get calibration data from historical predictions.
+    Groups predicted try percentages into buckets and returns actual hit rates."""
+    conn = get_db()
+    # Get all predictions with top3 data
+    rows = conn.execute("""
+        SELECT top3_home_json, top3_away_json, top3_hits
+        FROM predictions
+        WHERE actual_winner IS NOT NULL AND top3_home_json IS NOT NULL
+    """).fetchall()
+    conn.close()
+
+    if len(rows) < 10:
+        return {}  # Not enough data to calibrate
+
+    import json
+    # Collect (predicted_prob, did_score) pairs
+    pairs = []
+    for r in rows:
+        try:
+            home_picks = json.loads(r["top3_home_json"]) if r["top3_home_json"] else []
+            away_picks = json.loads(r["top3_away_json"]) if r["top3_away_json"] else []
+            for pick in home_picks + away_picks:
+                if "try_percentage" in pick and "scored" in pick:
+                    pairs.append((pick["try_percentage"] / 100.0, 1 if pick["scored"] else 0))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    if len(pairs) < 30:
+        return {}
+
+    # Create calibration buckets (0-10%, 10-20%, etc.)
+    buckets = {}
+    for pred, actual in pairs:
+        bucket = min(int(pred * 10), 5)  # 0-5 (0-10%, 10-20%, ..., 50%+)
+        if bucket not in buckets:
+            buckets[bucket] = {"predicted_sum": 0, "actual_sum": 0, "count": 0}
+        buckets[bucket]["predicted_sum"] += pred
+        buckets[bucket]["actual_sum"] += actual
+        buckets[bucket]["count"] += 1
+
+    calibration = {}
+    for bucket, data in buckets.items():
+        if data["count"] >= 5:
+            avg_predicted = data["predicted_sum"] / data["count"]
+            avg_actual = data["actual_sum"] / data["count"]
+            calibration[bucket] = {
+                "avg_predicted": round(avg_predicted, 3),
+                "avg_actual": round(avg_actual, 3),
+                "ratio": round(avg_actual / avg_predicted, 3) if avg_predicted > 0 else 1.0,
+                "count": data["count"],
+            }
+    return calibration
+
+
+@_cached_query("opponent_quality_tries")
+def get_player_quality_adjusted_tries(player_name: str, before_season=None, before_round=None) -> float:
+    """Get a player's try rate adjusted for opponent defensive quality.
+    Tries against weak defences are discounted, tries against strong defences are boosted."""
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    # Get all matches this player appeared in with their try counts and opponent
+    rows = conn.execute(f"""
+        SELECT p.match_id, p.side,
+               m.home_team, m.away_team, m.home_score, m.away_score,
+               (SELECT COUNT(*) FROM tries t WHERE t.match_id = p.match_id AND t.player_name = p.name) as tries_scored
+        FROM players p
+        JOIN matches m ON m.id = p.match_id
+        WHERE p.name = %s AND m.match_state = 'FullTime'{tf}
+        ORDER BY m.season DESC, m.round_number DESC
+        LIMIT 20
+    """, (player_name, *tp)).fetchall()
+    conn.close()
+
+    if len(rows) < 3:
+        return -1.0  # Not enough data
+
+    # Calculate league average conceding
+    total_weighted_rate = 0
+    total_weight = 0
+    for r in rows:
+        opponent = r["away_team"] if r["side"] == "home" else r["home_team"]
+        # Opponent's points conceded in this match as a proxy for defensive quality
+        opp_conceded = r["home_score"] if r["side"] == "away" else r["away_score"]
+        # Weight: strong defence (low conceding) → weight > 1, weak defence → weight < 1
+        defence_quality = max(0.5, min(22.0 / max(opp_conceded, 4), 2.0))
+        tries = r["tries_scored"] or 0
+        total_weighted_rate += tries * defence_quality
+        total_weight += defence_quality
+
+    if total_weight == 0:
+        return -1.0
+    return round(total_weighted_rate / total_weight, 3)
 
 
 def get_weather_scoring_impact() -> dict:
