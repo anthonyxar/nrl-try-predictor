@@ -59,49 +59,22 @@ async def lifespan(app: FastAPI):
 
 
 async def _warm_cache():
-    """Pre-load the cache for the current round so first page load is fast."""
+    """Pre-load the cache for all rounds that have data so every page loads instantly."""
     try:
         await asyncio.sleep(1)
-        logger.info("Warming cache...")
+        logger.info("Warming cache for all rounds...")
 
-        # Find the latest round with completed or upcoming matches
-        # Search forward from round 1 to find the current active round
-        target_round = None
-        target_raw = None
         for r in range(1, TOTAL_ROUNDS + 1):
-            raw = await fetch_round(r)
-            if not raw:
-                continue
-            fixtures, _ = parse_fixtures(raw)
-            if not fixtures:
-                continue
-            # Check if this round has any non-FullTime matches (upcoming/live)
-            has_upcoming = any(
-                (f.get("match_state") or "").lower() not in ("fulltime", "postmatch")
-                for f in fixtures
-            )
-            if has_upcoming:
-                target_round = r
-                target_raw = raw
+            result = await _refresh_round_cache(r, 3)
+            if result is None:
+                logger.info(f"Round {r} unavailable, stopping warmup.")
                 break
-            # Track the latest completed round as fallback
-            target_round = r
-            target_raw = raw
+            if not result.get("matches"):
+                logger.info(f"Round {r} has no fixtures, stopping warmup.")
+                break
+            logger.info(f"Warmed round {r}.")
 
-        if target_raw and target_round:
-            fixtures, byes = parse_fixtures(target_raw)
-            logger.info(f"Warming cache for round {target_round} ({len(fixtures)} matches)...")
-            await asyncio.to_thread(_enrich_fixtures, fixtures, 3, target_round)
-            # Store in round response cache so first request is instant
-            response = {
-                "round": target_round,
-                "name": f"Round {target_round}",
-                "matches": fixtures,
-                "byes": byes,
-            }
-            with _round_cache_lock:
-                _round_cache[(target_round, 3)] = (response, time.time())
-            logger.info(f"Cache warmed for round {target_round}.")
+        logger.info("Cache warmup complete.")
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -444,8 +417,31 @@ def _enrich_fixtures(fixtures, model_version, round_number):
 # --- Round response cache ---
 _round_cache = {}       # key: (round_number, model_version) -> (response_dict, timestamp)
 _round_cache_lock = threading.Lock()
+_round_refreshing = set()  # keys currently being refreshed in background
 _ROUND_CACHE_TTL_LIVE = 120      # 2 min for rounds with upcoming/live matches
 _ROUND_CACHE_TTL_COMPLETED = 1800  # 30 min for fully completed rounds
+
+
+async def _refresh_round_cache(round_number, model_version):
+    """Fetch and compute a round response, store in cache."""
+    cache_key = (round_number, model_version)
+    try:
+        raw = await fetch_round(round_number)
+        if raw is None:
+            return None
+        fixtures, byes = parse_fixtures(raw)
+        fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, model_version, round_number)
+        response = {
+            "round": round_number,
+            "name": f"Round {round_number}",
+            "matches": fixtures,
+            "byes": byes,
+        }
+        with _round_cache_lock:
+            _round_cache[cache_key] = (response, time.time())
+        return response
+    finally:
+        _round_refreshing.discard(cache_key)
 
 
 @app.get("/api/rounds/{round_number}")
@@ -461,34 +457,26 @@ async def get_round(round_number: int, version: int = 3):
     # Check response cache
     with _round_cache_lock:
         cached = _round_cache.get(cache_key)
-        if cached:
-            resp, ts = cached
-            # Determine TTL based on whether round is fully completed
-            has_live = any(
-                (m.get("match_state") or "").lower() not in ("fulltime", "postmatch")
-                for m in resp.get("matches", [])
-            )
-            ttl = _ROUND_CACHE_TTL_LIVE if has_live else _ROUND_CACHE_TTL_COMPLETED
-            if now - ts < ttl:
-                return resp
 
-    raw = await fetch_round(round_number)
-    if raw is None:
+    if cached:
+        resp, ts = cached
+        has_live = any(
+            (m.get("match_state") or "").lower() not in ("fulltime", "postmatch")
+            for m in resp.get("matches", [])
+        )
+        ttl = _ROUND_CACHE_TTL_LIVE if has_live else _ROUND_CACHE_TTL_COMPLETED
+        if now - ts < ttl:
+            return resp
+        # Stale — return immediately but refresh in background
+        if cache_key not in _round_refreshing:
+            _round_refreshing.add(cache_key)
+            asyncio.create_task(_refresh_round_cache(round_number, model_version))
+        return resp
+
+    # No cache at all — must compute synchronously
+    response = await _refresh_round_cache(round_number, model_version)
+    if response is None:
         raise HTTPException(status_code=502, detail="Could not fetch round data from NRL")
-
-    fixtures, byes = parse_fixtures(raw)
-    fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, model_version, round_number)
-
-    response = {
-        "round": round_number,
-        "name": f"Round {round_number}",
-        "matches": fixtures,
-        "byes": byes,
-    }
-
-    with _round_cache_lock:
-        _round_cache[cache_key] = (response, now)
-
     return response
 
 
