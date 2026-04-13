@@ -2782,9 +2782,9 @@ body {
 }
 
 .rugby-ball-wrapper {
-  width: 80px;
-  height: 50px;
-  animation: rugby-spin 1.2s ease-in-out infinite;
+  width: 72px;
+  height: 72px;
+  animation: rugby-spin 1.4s ease-in-out infinite;
 }
 
 .rugby-ball {
@@ -2802,6 +2802,6 @@ body {
 
 @keyframes rugby-spin {
   0% { transform: rotate(0deg); }
-  50% { transform: rotate(360deg) scaleX(0.6); }
+  50% { transform: rotate(360deg); }
   100% { transform: rotate(720deg); }
 }
