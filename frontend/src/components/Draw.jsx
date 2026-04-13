@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
+import LoadingSpinner from './LoadingSpinner'
 
 const TEAM_COLOURS = {
   'broncos': '#6D2735',
@@ -53,22 +54,7 @@ export default function Draw({ apiBase }) {
         <Link to="/" className="back-link">&larr; All Rounds</Link>
         <h2>Round {roundNumber}</h2>
       </div>
-      <div className="matches-grid">
-        {[1,2,3,4].map(i => (
-          <div key={i} className="match-card skeleton-card">
-            <div className="skeleton-line skeleton-short" />
-            <div className="skeleton-teams">
-              <div className="skeleton-circle" />
-              <div className="skeleton-line skeleton-medium" />
-            </div>
-            <div className="skeleton-teams">
-              <div className="skeleton-circle" />
-              <div className="skeleton-line skeleton-medium" />
-            </div>
-            <div className="skeleton-line skeleton-short" />
-          </div>
-        ))}
-      </div>
+      <LoadingSpinner text={`Loading Round ${roundNumber} predictions...`} />
     </div>
   )
   if (!roundData) return <div className="error">Round not found</div>

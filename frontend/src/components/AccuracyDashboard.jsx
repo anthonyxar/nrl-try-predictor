@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import LoadingSpinner from './LoadingSpinner'
 
 export default function AccuracyDashboard({ apiBase }) {
   const [data, setData] = useState(null)
@@ -15,7 +16,7 @@ export default function AccuracyDashboard({ apiBase }) {
       .catch(() => setLoading(false))
   }, [apiBase, modelFilter])
 
-  if (loading) return <div className="loading">Loading accuracy data...</div>
+  if (loading) return <LoadingSpinner text="Loading accuracy data..." />
   if (!data) return <div className="error-message">No accuracy data available yet. View some completed matches to start tracking.</div>
 
   const win = data.win_prediction
