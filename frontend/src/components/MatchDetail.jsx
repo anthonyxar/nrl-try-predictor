@@ -31,7 +31,32 @@ export default function MatchDetail({ apiBase }) {
       .catch(e => { setError(e.message); setLoading(false); setVersionLoading(false) })
   }, [apiBase, matchUrl, modelVersion])
 
-  if (loading) return <div className="loading">Fetching team lists and calculating predictions...</div>
+  if (loading) return (
+    <div className="match-detail">
+      <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="back-link">
+        &larr; Back to {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
+      </Link>
+      <div className="skeleton-match-header">
+        <div className="skeleton-teams-row">
+          <div className="skeleton-circle skeleton-lg" />
+          <div className="skeleton-line skeleton-short" />
+          <div className="skeleton-line skeleton-vs" />
+          <div className="skeleton-line skeleton-short" />
+          <div className="skeleton-circle skeleton-lg" />
+        </div>
+        <div className="skeleton-line skeleton-medium" style={{margin: '1rem auto'}} />
+      </div>
+      <div className="skeleton-players">
+        {[1,2,3,4,5,6].map(i => (
+          <div key={i} className="skeleton-player-row">
+            <div className="skeleton-line skeleton-short" />
+            <div className="skeleton-line skeleton-long" />
+            <div className="skeleton-line skeleton-short" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
   if (error) return (
     <div className="error-container">
       <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="back-link">&larr; Back</Link>

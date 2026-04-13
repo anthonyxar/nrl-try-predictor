@@ -343,7 +343,7 @@ async def proxy_image(url: str):
 @app.get("/api/rounds")
 async def get_rounds():
     return {
-        str(i): {"name": f"Round {i}", "round_number": i}
+        str(i): {"name": f"Round {i}"}
         for i in range(1, TOTAL_ROUNDS + 1)
     }
 
@@ -420,6 +420,13 @@ def _enrich_fixtures(fixtures, model_version, round_number):
     # Now run predictions — all DB calls will hit the cache
     for f in fixtures:
         _predict_single_fixture(f, model_version, round_number)
+
+    # Strip fields the frontend doesn't use
+    for f in fixtures:
+        f.pop("home_odds", None)
+        f.pop("away_odds", None)
+        f.pop("team_lists_announced", None)
+
     return fixtures
 
 
@@ -622,9 +629,14 @@ def _compute_match_detail(url, raw, home_players, away_players,
     home_theme = home_team.get("theme", {})
     away_theme = away_team.get("theme", {})
 
+    # Strip internal-only fields from player predictions before sending
+    _player_strip_keys = ("try_probability", "is_interchange")
+    for side in ("home", "away"):
+        for p in predictions.get(side, []):
+            for k in _player_strip_keys:
+                p.pop(k, None)
+
     return {
-        "match_url": url,
-        "match_state": match_state,
         "is_completed": is_completed,
         "home_team": home_team.get("name", home_nickname),
         "away_team": away_team.get("name", away_nickname),
@@ -636,15 +648,12 @@ def _compute_match_detail(url, raw, home_players, away_players,
         "away_theme_key": away_theme.get("key", "") if isinstance(away_theme, dict) else "",
         "home_position": home_team.get("teamPosition", ""),
         "away_position": away_team.get("teamPosition", ""),
-        "home_odds": home_team.get("odds", ""),
-        "away_odds": away_team.get("odds", ""),
         "odds_comparison": _build_odds_comparison(
             home_team.get("odds", ""), away_team.get("odds", ""),
             win_prediction["home_win_prob"], win_prediction["away_win_prob"],
         ),
         "venue": raw.get("venue", ""),
         "venue_city": raw.get("venueCity", ""),
-        "kickoff": raw.get("startTime", ""),
         "weather": raw.get("weather", ""),
         "ground_conditions": raw.get("groundConditions", ""),
         "home_stats": stats.get("home", {}),
@@ -659,7 +668,6 @@ def _compute_match_detail(url, raw, home_players, away_players,
         "value_picks_away": value_picks_away,
         "home_summary": home_summary,
         "away_summary": away_summary,
-        "model_version": model_version,
         "db_status": {
             "matches": get_total_match_count(),
             "tries": get_total_try_count(),

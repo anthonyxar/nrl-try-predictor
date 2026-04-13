@@ -35,11 +35,42 @@ export default function Draw({ apiBase }) {
     else setLoading(true)
     fetch(`${apiBase}/rounds/${roundNumber}?version=${modelVersion}`)
       .then(r => r.json())
-      .then(data => { setRoundData(data); setLoading(false); setVersionLoading(false) })
+      .then(data => {
+        setRoundData(data)
+        setLoading(false)
+        setVersionLoading(false)
+        // Prefetch adjacent rounds in background
+        const rn = parseInt(roundNumber)
+        if (rn > 1) fetch(`${apiBase}/rounds/${rn - 1}?version=${modelVersion}`)
+        if (rn < 27) fetch(`${apiBase}/rounds/${rn + 1}?version=${modelVersion}`)
+      })
       .catch(() => { setLoading(false); setVersionLoading(false) })
   }, [apiBase, roundNumber, modelVersion])
 
-  if (loading) return <div className="loading">Loading draw from NRL...</div>
+  if (loading) return (
+    <div className="draw">
+      <div className="draw-header">
+        <Link to="/" className="back-link">&larr; All Rounds</Link>
+        <h2>Round {roundNumber}</h2>
+      </div>
+      <div className="matches-grid">
+        {[1,2,3,4].map(i => (
+          <div key={i} className="match-card skeleton-card">
+            <div className="skeleton-line skeleton-short" />
+            <div className="skeleton-teams">
+              <div className="skeleton-circle" />
+              <div className="skeleton-line skeleton-medium" />
+            </div>
+            <div className="skeleton-teams">
+              <div className="skeleton-circle" />
+              <div className="skeleton-line skeleton-medium" />
+            </div>
+            <div className="skeleton-line skeleton-short" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
   if (!roundData) return <div className="error">Round not found</div>
 
   const formatDate = (dt) => {

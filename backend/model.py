@@ -569,7 +569,6 @@ def predict_win_probability(
         "home_win_prob": round(home_prob, 3),
         "away_win_prob": round(away_prob, 3),
         "predicted_winner": home_team if home_prob >= 0.5 else away_team,
-        "confidence": round(max(home_prob, away_prob) * 100, 1),
         "predicted_home_score": int(home_pred_score),
         "predicted_away_score": int(away_pred_score),
         "factors": {
@@ -578,8 +577,6 @@ def predict_win_probability(
             "h2h_home_wins": h2h.get("team_a_wins", 0),
             "h2h_away_wins": h2h.get("team_b_wins", 0),
             "h2h_played": h2h.get("played", 0),
-            "home_venue_wr": round(home_venue_factor, 3),
-            "away_venue_wr": round(away_venue_factor, 3),
         },
     }
     if is_wet or is_heavy:
@@ -748,13 +745,11 @@ def generate_multi_suggestion(home_predictions: list, away_predictions: list,
             "name": p["name"],
             "team": p["team"],
             "position": p["position"],
-            "number": p.get("number", 0),
             "try_percentage": p["try_percentage"],
         })
 
     return {
         "picks": multi_result,
-        "multi_probability": round(multi_prob, 4),
         "multi_percentage": round(multi_prob * 100, 2),
     }
 
