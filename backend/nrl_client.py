@@ -5,6 +5,7 @@ Draw endpoint:  /draw/data?competition=111&season=2026&round=N
 Match endpoint: /draw/nrl-premiership/2026/round-N/team-v-team/data
 """
 
+import time
 import httpx
 import logging
 from typing import Optional
@@ -22,16 +23,28 @@ HEADERS = {
     "Accept-Language": "en-AU,en;q=0.9",
 }
 
+# Cache NRL API responses to avoid repeated external fetches
+_nrl_api_cache = {}  # key -> (data, timestamp)
+_NRL_CACHE_TTL = 60  # 1 minute
+
 
 async def fetch_round(round_number: int) -> Optional[dict]:
     """Fetch all fixtures for a given round from the NRL API."""
+    cache_key = f"round_{round_number}"
+    now = time.time()
+    cached = _nrl_api_cache.get(cache_key)
+    if cached and now - cached[1] < _NRL_CACHE_TTL:
+        return cached[0]
+
     url = f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={SEASON}&round={round_number}"
     async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
         resp = await client.get(url)
         if resp.status_code != 200:
             logger.error(f"NRL round API returned {resp.status_code}")
             return None
-        return resp.json()
+        data = resp.json()
+        _nrl_api_cache[cache_key] = (data, now)
+        return data
 
 
 async def fetch_match_detail(match_url_path: str) -> Optional[dict]:

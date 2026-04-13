@@ -1,7 +1,9 @@
 import os
 import re
+import time
 import logging
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 
 import httpx
@@ -87,9 +89,18 @@ async def _warm_cache():
             target_raw = raw
 
         if target_raw and target_round:
-            fixtures, _ = parse_fixtures(target_raw)
+            fixtures, byes = parse_fixtures(target_raw)
             logger.info(f"Warming cache for round {target_round} ({len(fixtures)} matches)...")
             await asyncio.to_thread(_enrich_fixtures, fixtures, 3, target_round)
+            # Store in round response cache so first request is instant
+            response = {
+                "round": target_round,
+                "name": f"Round {target_round}",
+                "matches": fixtures,
+                "byes": byes,
+            }
+            with _round_cache_lock:
+                _round_cache[(target_round, 3)] = (response, time.time())
             logger.info(f"Cache warmed for round {target_round}.")
     except asyncio.CancelledError:
         pass
@@ -430,12 +441,36 @@ def _enrich_fixtures(fixtures, model_version, round_number):
     return fixtures
 
 
+# --- Round response cache ---
+_round_cache = {}       # key: (round_number, model_version) -> (response_dict, timestamp)
+_round_cache_lock = threading.Lock()
+_ROUND_CACHE_TTL_LIVE = 120      # 2 min for rounds with upcoming/live matches
+_ROUND_CACHE_TTL_COMPLETED = 1800  # 30 min for fully completed rounds
+
+
 @app.get("/api/rounds/{round_number}")
 async def get_round(round_number: int, version: int = 3):
 
     model_version = max(1, min(version, 3))
     if round_number < 1 or round_number > TOTAL_ROUNDS:
         raise HTTPException(status_code=404, detail="Invalid round number")
+
+    cache_key = (round_number, model_version)
+    now = time.time()
+
+    # Check response cache
+    with _round_cache_lock:
+        cached = _round_cache.get(cache_key)
+        if cached:
+            resp, ts = cached
+            # Determine TTL based on whether round is fully completed
+            has_live = any(
+                (m.get("match_state") or "").lower() not in ("fulltime", "postmatch")
+                for m in resp.get("matches", [])
+            )
+            ttl = _ROUND_CACHE_TTL_LIVE if has_live else _ROUND_CACHE_TTL_COMPLETED
+            if now - ts < ttl:
+                return resp
 
     raw = await fetch_round(round_number)
     if raw is None:
@@ -444,12 +479,17 @@ async def get_round(round_number: int, version: int = 3):
     fixtures, byes = parse_fixtures(raw)
     fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, model_version, round_number)
 
-    return {
+    response = {
         "round": round_number,
         "name": f"Round {round_number}",
         "matches": fixtures,
         "byes": byes,
     }
+
+    with _round_cache_lock:
+        _round_cache[cache_key] = (response, now)
+
+    return response
 
 
 @app.get("/api/player")
