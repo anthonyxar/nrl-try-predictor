@@ -61,18 +61,24 @@ async def lifespan(app: FastAPI):
 async def _warm_cache():
     """Pre-load the cache for all rounds that have data so every page loads instantly."""
     try:
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         logger.info("Warming cache for all rounds...")
 
         for r in range(1, TOTAL_ROUNDS + 1):
-            result = await _refresh_round_cache(r, 3)
-            if result is None:
-                logger.info(f"Round {r} unavailable, stopping warmup.")
-                break
-            if not result.get("matches"):
-                logger.info(f"Round {r} has no fixtures, stopping warmup.")
-                break
-            logger.info(f"Warmed round {r}.")
+            try:
+                result = await _refresh_round_cache(r, 3)
+                if result is None:
+                    logger.info(f"Round {r} unavailable, stopping warmup.")
+                    break
+                if not result.get("matches"):
+                    logger.info(f"Round {r} has no fixtures, stopping warmup.")
+                    break
+                logger.info(f"Warmed round {r}.")
+            except Exception as e:
+                logger.warning(f"Failed to warm round {r}: {e}")
+                continue
+            # Small delay between rounds to avoid overwhelming DB on free tier
+            await asyncio.sleep(0.5)
 
         logger.info("Cache warmup complete.")
     except asyncio.CancelledError:
