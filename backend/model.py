@@ -79,20 +79,23 @@ JERSEY_FIELD_SIDE = {
 }
 
 # Position-specific sensitivity to edge vulnerability (V3+).
-# Edge vulnerability stats are dominated by wingers — applying the same
-# factor to all positions on an edge inflates odds for halves, centres,
-# and 2nd rowers who score far fewer edge tries.
+# Weights derived from 2026 rounds 1-8 try distribution per edge:
+#   Left edge:  Winger 31%, Five-Eighth 23%, Centre 23%, 2nd Row 22%
+#   Right edge: Winger 43%, Centre 27%, 2nd Row 15%, Halfback 11%
+# Each weight is proportional to the position's share of edge tries,
+# scaled so wingers (highest share) = 0.30.
 POSITION_EDGE_SENSITIVITY = {
-    "Winger": 0.30,       # Primary edge try scorers — full sensitivity
-    "Centre": 0.15,       # Score on edges but less than wingers
-    "Second Row": 0.12,   # Can finish edge plays
-    "2nd Row": 0.12,
-    "Five-Eighth": 0.06,  # Rarely score edge tries
-    "Halfback": 0.06,     # Rarely score edge tries
-    "Fullback": 0.10,     # Pop up across all edges
-    "Prop": 0.03,         # Almost never score edge tries
-    "Hooker": 0.05,       # Close to ruck, occasional darts
-    "Lock": 0.05,         # Similar to props
+    "Winger": 0.30,       # 37% avg edge share — baseline
+    "Centre": 0.20,       # 25% avg edge share
+    "Five-Eighth": 0.19,  # 23% of left edge tries
+    "Second Row": 0.15,   # 19% avg edge share
+    "2nd Row": 0.15,
+    "Halfback": 0.09,     # 11% of right edge tries
+    "Fullback": 0.28,     # 95% of fullback-category tries
+    "Prop": 0.03,         # ~5% middle share, rarely on edges
+    "Hooker": 0.04,       # ~14% middle share
+    "Lock": 0.04,         # ~14% middle share
+    "Interchange": 0.05,  # ~30% middle share, varies by replaced position
 }
 _DEFAULT_EDGE_SENSITIVITY = 0.05
 
