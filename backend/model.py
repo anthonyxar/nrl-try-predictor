@@ -78,6 +78,24 @@ JERSEY_FIELD_SIDE = {
     13: "middle",   # Lock
 }
 
+# Position-specific sensitivity to edge vulnerability (V3+).
+# Edge vulnerability stats are dominated by wingers — applying the same
+# factor to all positions on an edge inflates odds for halves, centres,
+# and 2nd rowers who score far fewer edge tries.
+POSITION_EDGE_SENSITIVITY = {
+    "Winger": 0.30,       # Primary edge try scorers — full sensitivity
+    "Centre": 0.15,       # Score on edges but less than wingers
+    "Second Row": 0.12,   # Can finish edge plays
+    "2nd Row": 0.12,
+    "Five-Eighth": 0.06,  # Rarely score edge tries
+    "Halfback": 0.06,     # Rarely score edge tries
+    "Fullback": 0.10,     # Pop up across all edges
+    "Prop": 0.03,         # Almost never score edge tries
+    "Hooker": 0.05,       # Close to ruck, occasional darts
+    "Lock": 0.05,         # Similar to props
+}
+_DEFAULT_EDGE_SENSITIVITY = 0.05
+
 # Weather keywords that indicate wet/adverse conditions
 _WET_KEYWORDS = {"rain", "rainy", "showers", "shower", "wet", "drizzle", "storm", "stormy", "thunderstorm"}
 _HEAVY_GROUND = {"heavy", "soft", "wet", "muddy"}
@@ -288,7 +306,14 @@ def _predict_try_with_history(
         edge_info = opp_edge_vulnerability.get(player_edge, {})
         edge_vuln = edge_info.get("vulnerability", 1.0)
         if edge_vuln != 1.0:
-            edge_factor = 1.0 + (edge_vuln - 1.0) * 0.3
+            if model_version >= 3:
+                # V3: position-specific sensitivity — wingers get full factor,
+                # halves/centres/2nd rowers get proportionally less
+                edge_weight = POSITION_EDGE_SENSITIVITY.get(position, _DEFAULT_EDGE_SENSITIVITY)
+            else:
+                # V2: flat 0.3 weight for all positions (legacy)
+                edge_weight = 0.3
+            edge_factor = 1.0 + (edge_vuln - 1.0) * edge_weight
             edge_factor = max(0.85, min(edge_factor, 1.20))
             rate *= edge_factor
 
@@ -818,7 +843,11 @@ def find_value_picks(predictions: list, opp_team_name: str, team_nickname: str,
         edge_info = opp_edge_vuln.get(player_edge, {}) if player_edge else {}
         edge_vuln_val = edge_info.get("vulnerability", 1.0)
         has_pos_vuln = vulnerability >= 1.15
-        has_edge_vuln = edge_vuln_val >= 1.15
+        # Scale edge vuln threshold by position — low-sensitivity positions
+        # need a much higher raw edge vuln to qualify
+        pos_edge_sens = POSITION_EDGE_SENSITIVITY.get(pos, _DEFAULT_EDGE_SENSITIVITY)
+        edge_vuln_threshold = 1.15 if pos_edge_sens >= 0.15 else 1.40
+        has_edge_vuln = edge_vuln_val >= edge_vuln_threshold
         if not has_pos_vuln and not has_edge_vuln:
             continue
         candidates.append((rank, player, pos, vulnerability, vuln, player_edge, edge_info, edge_vuln_val, has_pos_vuln, has_edge_vuln))
@@ -844,7 +873,9 @@ def find_value_picks(predictions: list, opp_team_name: str, team_nickname: str,
         # Calculate a value score combining position vuln, edge vuln, and form
         form_score = min(form["rate"] * 2, 1.0) + (form["streak"] * 0.15)
         pos_vuln_score = (max(vulnerability, 1.0) - 1.0) * 2
-        edge_vuln_score = (max(edge_vuln, 1.0) - 1.0) * 1.5
+        # Scale edge vuln score by position sensitivity
+        edge_sensitivity = POSITION_EDGE_SENSITIVITY.get(pos, _DEFAULT_EDGE_SENSITIVITY)
+        edge_vuln_score = (max(edge_vuln, 1.0) - 1.0) * (edge_sensitivity / 0.30) * 1.5
         value_score = form_score + pos_vuln_score + edge_vuln_score
 
         if value_score < 0.4:
