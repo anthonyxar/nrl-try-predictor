@@ -294,6 +294,21 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/debug/bye-check")
+async def debug_bye_check():
+    """Temporary: check Titans bye data."""
+    conn = get_db()
+    matches = conn.execute("""
+        SELECT season, round_number, home_team, away_team, match_state
+        FROM matches
+        WHERE (home_team LIKE '%Titan%' OR away_team LIKE '%Titan%')
+          AND season = 2026
+        ORDER BY round_number
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in matches]
+
+
 @app.get("/api/status")
 async def get_status():
     """Return DB status - how much historical data is loaded."""
