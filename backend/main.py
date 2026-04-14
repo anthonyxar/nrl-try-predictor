@@ -294,6 +294,45 @@ async def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/debug/edge-position-breakdown")
+async def edge_position_breakdown():
+    """Temporary: compute try distribution by position per edge for 2026."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT t.field_side, p.position, COUNT(*) as tries
+        FROM tries t
+        JOIN matches m ON t.match_id = m.id
+        JOIN players p ON p.match_id = t.match_id
+            AND p.name = t.player_name
+            AND p.side = t.side
+        WHERE m.season = 2026
+          AND m.round_number <= 8
+          AND t.field_side != ''
+          AND p.position IS NOT NULL
+        GROUP BY t.field_side, p.position
+        ORDER BY t.field_side, tries DESC
+    """).fetchall()
+    conn.close()
+
+    result = {}
+    for r in rows:
+        edge = r["field_side"]
+        if edge not in result:
+            result[edge] = {"positions": {}, "total": 0}
+        result[edge]["positions"][r["position"]] = r["tries"]
+        result[edge]["total"] += r["tries"]
+
+    # Compute proportions
+    for edge, data in result.items():
+        for pos, count in data["positions"].items():
+            data["positions"][pos] = {
+                "tries": count,
+                "share": round(count / data["total"], 3) if data["total"] > 0 else 0,
+            }
+
+    return result
+
+
 @app.get("/api/status")
 async def get_status():
     """Return DB status - how much historical data is loaded."""
