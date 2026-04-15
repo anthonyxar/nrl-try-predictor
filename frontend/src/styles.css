@@ -2800,6 +2800,30 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ========================================
+   Footer
+   ======================================== */
+.footer {
+  margin-top: 3rem;
+  padding: 1.5rem 1rem;
+  background: #111827;
+  color: #d1d5db;
+  border-top: 3px solid #16a34a;
+}
+
+.footer-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.footer-disclaimer {
+  font-size: 0.8rem;
+  line-height: 1.55;
+  margin: 0;
+  color: #9ca3af;
+}
+
 @keyframes rugby-spin {
   0% { transform: rotate(0deg); }
   50% { transform: rotate(360deg); }

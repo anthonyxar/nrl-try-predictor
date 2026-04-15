@@ -44,6 +44,17 @@ export default function App() {
           <Route path="/models" element={<Models />} />
         </Routes>
       </main>
+      <footer className="footer">
+        <div className="footer-inner">
+          <p className="footer-disclaimer">
+            Disclaimer: this website is for informational and entertainment
+            purposes only. All predictions are statistical estimates and are
+            not betting advice. This website and its operators accept no
+            responsibility for any financial loss incurred from decisions made
+            based on the information presented here. Please gamble responsibly.
+          </p>
+        </div>
+      </footer>
     </div>
   )
 }
