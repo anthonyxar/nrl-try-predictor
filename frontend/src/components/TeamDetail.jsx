@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
+import LoadingSpinner from './LoadingSpinner'
 
 export default function TeamDetail({ apiBase }) {
   const [searchParams] = useSearchParams()
@@ -22,7 +23,7 @@ export default function TeamDetail({ apiBase }) {
       .catch(e => { setError(e.message); setLoading(false) })
   }, [apiBase, teamName, season])
 
-  if (loading) return <div className="loading">Loading team data...</div>
+  if (loading) return <LoadingSpinner text="Loading team data..." />
   if (error) return (
     <div className="error-container">
       <Link to="/" className="back-link">&larr; Back</Link>
