@@ -165,18 +165,20 @@ export default function MatchDetail({ apiBase }) {
       <div className="match-overview">
         <div className="match-detail-header">
           <div className="detail-team home">
-            <div className="detail-logo-wrap">
-              <img
-                className="detail-logo"
-                src={`https://www.nrl.com/.theme/${match.home_theme_key || 'nrl'}/badge.svg`}
-                alt={match.home_nickname}
-                onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
-              />
-              <div className="detail-badge" style={{ backgroundColor: match.home_colour || '#333', display: 'none' }}>
-                {(match.home_nickname || '').substring(0, 3).toUpperCase()}
+            <Link to={`/team?name=${encodeURIComponent(match.home_team)}`} className="detail-team-link" aria-label={`View ${match.home_team} stats`}>
+              <div className="detail-logo-wrap">
+                <img
+                  className="detail-logo"
+                  src={`https://www.nrl.com/.theme/${match.home_theme_key || 'nrl'}/badge.svg`}
+                  alt={match.home_nickname}
+                  onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
+                />
+                <div className="detail-badge" style={{ backgroundColor: match.home_colour || '#333', display: 'none' }}>
+                  {(match.home_nickname || '').substring(0, 3).toUpperCase()}
+                </div>
               </div>
-            </div>
-            <h3>{match.home_team}</h3>
+              <h3>{match.home_team}</h3>
+            </Link>
             {match.home_position && <span className="ladder-pos">{match.home_position}</span>}
           </div>
           <div className="detail-vs">
@@ -194,18 +196,20 @@ export default function MatchDetail({ apiBase }) {
             {isCompleted && <span className="detail-ft">Full Time</span>}
           </div>
           <div className="detail-team away">
-            <div className="detail-logo-wrap">
-              <img
-                className="detail-logo"
-                src={`https://www.nrl.com/.theme/${match.away_theme_key || 'nrl'}/badge.svg`}
-                alt={match.away_nickname}
-                onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
-              />
-              <div className="detail-badge" style={{ backgroundColor: match.away_colour || '#333', display: 'none' }}>
-                {(match.away_nickname || '').substring(0, 3).toUpperCase()}
+            <Link to={`/team?name=${encodeURIComponent(match.away_team)}`} className="detail-team-link" aria-label={`View ${match.away_team} stats`}>
+              <div className="detail-logo-wrap">
+                <img
+                  className="detail-logo"
+                  src={`https://www.nrl.com/.theme/${match.away_theme_key || 'nrl'}/badge.svg`}
+                  alt={match.away_nickname}
+                  onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
+                />
+                <div className="detail-badge" style={{ backgroundColor: match.away_colour || '#333', display: 'none' }}>
+                  {(match.away_nickname || '').substring(0, 3).toUpperCase()}
+                </div>
               </div>
-            </div>
-            <h3>{match.away_team}</h3>
+              <h3>{match.away_team}</h3>
+            </Link>
             {match.away_position && <span className="ladder-pos">{match.away_position}</span>}
           </div>
         </div>
