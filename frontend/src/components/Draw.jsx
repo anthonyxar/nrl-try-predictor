@@ -83,11 +83,31 @@ export default function Draw({ apiBase }) {
     return 'upcoming'
   }
 
+  const currentRound = parseInt(roundNumber)
+  const prevRound = currentRound > 1 ? currentRound - 1 : null
+  const nextRound = currentRound < 27 ? currentRound + 1 : null
+
   return (
     <div className="draw">
-      <div className="draw-header">
+      <div className="draw-header sticky">
         <Link to="/" className="back-link">&larr; All Rounds</Link>
-        <h2>{roundData.name}</h2>
+        <div className="round-nav">
+          {prevRound ? (
+            <Link to={`/round/${prevRound}`} className="round-nav-btn" aria-label={`Previous round (Round ${prevRound})`}>
+              &larr; R{prevRound}
+            </Link>
+          ) : (
+            <span className="round-nav-btn disabled" aria-hidden>&larr; R—</span>
+          )}
+          <h2 className="round-nav-title">{roundData.name}</h2>
+          {nextRound ? (
+            <Link to={`/round/${nextRound}`} className="round-nav-btn" aria-label={`Next round (Round ${nextRound})`}>
+              R{nextRound} &rarr;
+            </Link>
+          ) : (
+            <span className="round-nav-btn disabled" aria-hidden>R— &rarr;</span>
+          )}
+        </div>
       </div>
 
       <div className="version-selector">

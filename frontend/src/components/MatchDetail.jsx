@@ -13,6 +13,7 @@ export default function MatchDetail({ apiBase }) {
   const [activeTab, setActiveTab] = useState('home')
   const [modelVersion, setModelVersion] = useState(3)
   const [versionLoading, setVersionLoading] = useState(false)
+  const [expandedPick, setExpandedPick] = useState(null)
 
   const roundMatch = matchUrl ? matchUrl.match(/round-(\d+)/) : null
   const roundNumber = roundMatch ? roundMatch[1] : null
@@ -102,9 +103,11 @@ export default function MatchDetail({ apiBase }) {
 
   return (
     <div className="match-detail">
-      <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="back-link">
-        &larr; Back to {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
-      </Link>
+      <div className="match-detail-topbar sticky">
+        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="back-link">
+          &larr; Back to {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
+        </Link>
+      </div>
 
       {/* Model version selector */}
       <div className="version-selector">
@@ -551,39 +554,55 @@ export default function MatchDetail({ apiBase }) {
       {/* Top 3 per team */}
       <div className="top3-section">
         <h3 className="section-title">Top 3 Try Scorer Picks Per Team</h3>
+        <p className="top3-subtitle">Click a pick to see why the model rated it</p>
         <div className="top3-columns">
-          <div className="top3-column">
-            <h4 style={{ color: match.home_colour }}>{match.home_nickname}</h4>
-            {match.top3_home.map((pick, i) => (
-              <div key={i} className={`top3-pick ${isCompleted ? (pick.scored ? 'hit' : 'miss') : ''}`}>
-                <span className="pick-rank">{i + 1}.</span>
-                <span className="pick-name">{pick.name}</span>
-                <span className="pick-pos">{pick.position}</span>
-                <span className="pick-pct">{pick.try_percentage}%</span>
-                {isCompleted && (
-                  <span className={`pick-result ${pick.scored ? 'hit' : 'miss'}`}>
-                    {pick.scored ? 'SCORED' : 'NO TRY'}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="top3-column">
-            <h4 style={{ color: match.away_colour }}>{match.away_nickname}</h4>
-            {match.top3_away.map((pick, i) => (
-              <div key={i} className={`top3-pick ${isCompleted ? (pick.scored ? 'hit' : 'miss') : ''}`}>
-                <span className="pick-rank">{i + 1}.</span>
-                <span className="pick-name">{pick.name}</span>
-                <span className="pick-pos">{pick.position}</span>
-                <span className="pick-pct">{pick.try_percentage}%</span>
-                {isCompleted && (
-                  <span className={`pick-result ${pick.scored ? 'hit' : 'miss'}`}>
-                    {pick.scored ? 'SCORED' : 'NO TRY'}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+          {[
+            { side: 'home', picks: match.top3_home, colour: match.home_colour, name: match.home_nickname },
+            { side: 'away', picks: match.top3_away, colour: match.away_colour, name: match.away_nickname },
+          ].map(({ side, picks, colour, name }) => (
+            <div key={side} className="top3-column">
+              <h4 style={{ color: colour }}>{name}</h4>
+              {picks.map((pick, i) => {
+                const pickId = `${side}-${i}`
+                const isOpen = expandedPick === pickId
+                const factors = pick.factors || []
+                const hasFactors = factors.length > 0
+                return (
+                  <div
+                    key={i}
+                    className={`top3-pick ${isCompleted ? (pick.scored ? 'hit' : 'miss') : ''} ${hasFactors ? 'expandable' : ''} ${isOpen ? 'open' : ''}`}
+                    onClick={() => hasFactors && setExpandedPick(isOpen ? null : pickId)}
+                  >
+                    <div className="top3-pick-row">
+                      <span className="pick-rank">{i + 1}.</span>
+                      <span className="pick-name">{pick.name}</span>
+                      <span className="pick-pos">{pick.position}</span>
+                      <span className="pick-pct">{pick.try_percentage}%</span>
+                      {isCompleted && (
+                        <span className={`pick-result ${pick.scored ? 'hit' : 'miss'}`}>
+                          {pick.scored ? 'SCORED' : 'NO TRY'}
+                        </span>
+                      )}
+                      {hasFactors && (
+                        <span className="pick-chevron" aria-hidden>{isOpen ? '▾' : '▸'}</span>
+                      )}
+                    </div>
+                    {isOpen && hasFactors && (
+                      <div className="pick-factors" onClick={(e) => e.stopPropagation()}>
+                        <div className="pick-factors-title">Why this pick</div>
+                        {factors.map((f, j) => (
+                          <div key={j} className={`pick-factor ${f.impact || 'neutral'}`}>
+                            <span className="pick-factor-label">{f.label}</span>
+                            <span className="pick-factor-detail">{f.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ))}
         </div>
       </div>
 

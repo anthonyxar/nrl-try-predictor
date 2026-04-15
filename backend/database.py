@@ -310,6 +310,15 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_season ON predictions(season, round_number)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_version ON predictions(model_version)")
 
+    # Persistent in-memory response cache (survives restarts)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cache_store (
+            key TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            refreshed_at DOUBLE PRECISION NOT NULL
+        )
+    """)
+
     conn.commit()
 
     # Venue/weather columns on matches table
@@ -2228,3 +2237,45 @@ def get_team_recent_results(team_name: str, last_n: int = 10) -> list:
             "venue": r["venue"],
         })
     return results
+
+
+# --- Persistent response cache ---
+
+def save_cache_entry(key: str, payload_json: str, refreshed_at: float) -> None:
+    """Upsert a cache entry so it survives restarts."""
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO cache_store (key, payload, refreshed_at)
+               VALUES (%s, %s, %s)
+               ON CONFLICT (key) DO UPDATE
+               SET payload = EXCLUDED.payload, refreshed_at = EXCLUDED.refreshed_at""",
+            (key, payload_json, refreshed_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_all_cache_entries() -> list:
+    """Return every persisted cache entry as a list of dicts with key/payload/refreshed_at."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT key, payload, refreshed_at FROM cache_store"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"key": r["key"], "payload": r["payload"], "refreshed_at": float(r["refreshed_at"])}
+        for r in rows
+    ]
+
+
+def delete_cache_entry(key: str) -> None:
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM cache_store WHERE key=%s", (key,))
+        conn.commit()
+    finally:
+        conn.close()

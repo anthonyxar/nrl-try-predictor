@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import time
 import logging
 import asyncio
@@ -33,6 +34,7 @@ from database import (
     get_team_tries_conceded_by_edge, get_venue_stats,
     prefetch_round_data,
     get_player_headshot, update_player_headshots,
+    save_cache_entry, load_all_cache_entries,
 )
 from odds_client import (
     add_implied_odds_to_players,
@@ -73,11 +75,48 @@ async def lifespan(app: FastAPI):
     existing = get_total_match_count()
     logger.info(f"Starting up. DB has {existing} matches.")
 
+    # Restore previously-warmed cache from DB so requests can be served
+    # immediately, even before the background warmup re-runs.
+    _restore_cache_from_db()
+
     pred_task = asyncio.create_task(_prediction_sync())
     warmup_task = asyncio.create_task(_warm_cache())
     yield
     pred_task.cancel()
     warmup_task.cancel()
+
+
+def _cache_key_str(round_number: int, model_version: int) -> str:
+    return f"round:{round_number}:v{model_version}"
+
+
+def _restore_cache_from_db():
+    """Load every persisted round response into the in-memory cache at startup."""
+    try:
+        entries = load_all_cache_entries()
+    except Exception as e:
+        logger.warning(f"Could not load persisted cache from DB: {e}")
+        return
+    if not entries:
+        logger.info("No persisted cache entries found.")
+        return
+
+    loaded = 0
+    for entry in entries:
+        key = entry["key"]
+        if not key.startswith("round:"):
+            continue
+        try:
+            _, rnd_str, ver_str = key.split(":")
+            rnd = int(rnd_str)
+            ver = int(ver_str.lstrip("v"))
+            payload = json.loads(entry["payload"])
+        except Exception:
+            continue
+        with _round_cache_lock:
+            _round_cache[(rnd, ver)] = (payload, entry["refreshed_at"])
+        loaded += 1
+    logger.info(f"Restored {loaded} cache entries from DB.")
 
 
 async def _warm_cache():
@@ -114,7 +153,6 @@ PREDICTION_SYNC_INTERVAL = 600  # 10 minutes
 
 async def _record_prediction_for_match(match_url: str, model_version: int = 3):
     """Fetch a completed match from the NRL API, run predictions, and record accuracy."""
-    import json
 
     raw = await fetch_match_detail(match_url)
     if raw is None:
@@ -424,6 +462,110 @@ def _predict_single_fixture(f, model_version, round_number):
     return f
 
 
+# Qualitative base-rate labels for each NRL position, keyed off the
+# FALLBACK_POSITION_RATES used by model.py. Used to explain picks.
+_POSITION_BASE_LABEL = {
+    "Fullback": "Fullbacks score tries on ~28% of games (high-scoring position)",
+    "Winger": "Wingers are the #1 try-scoring position (~35% base rate)",
+    "Centre": "Centres score on ~22% of games (strong edge position)",
+    "Five-Eighth": "Five-eighths score on ~15% of games",
+    "Halfback": "Halfbacks score on ~12% of games",
+    "Prop": "Props rarely score tries (~6% base rate)",
+    "Hooker": "Hookers score on ~10% of games",
+    "2nd Row": "2nd rowers score on ~10% of games",
+    "Second Row": "2nd rowers score on ~10% of games",
+    "Lock": "Locks score on ~8% of games",
+    "Interchange": "Bench players get limited try-scoring minutes",
+}
+
+
+def _normalise_position(pos: str) -> str:
+    if not pos:
+        return ""
+    low = pos.lower()
+    for key in _POSITION_BASE_LABEL:
+        if key.lower() in low:
+            return key
+    return ""
+
+
+def _build_pick_factors(pred, team_summary, opp_summary, is_home):
+    """Build a list of contributing factors for a top-3 pick so the UI can
+    show *why* this player was selected. Uses data already on hand from
+    predictions + team summaries, so no extra DB calls are needed."""
+    factors = []
+
+    position = pred.get("position", "")
+    pos_key = _normalise_position(position)
+    if pos_key:
+        factors.append({
+            "label": f"Position: {position}",
+            "detail": _POSITION_BASE_LABEL[pos_key],
+            "impact": "positive" if pos_key in ("Winger", "Fullback", "Centre") else "neutral",
+        })
+
+    # Team attack — pull the strongest attacking point from the team summary
+    if team_summary:
+        atk_points = team_summary.get("attack") or []
+        strong_atk = next((pt for pt in atk_points if pt.get("type") == "strong"), None)
+        weak_atk = next((pt for pt in atk_points if pt.get("type") == "weak"), None)
+        atk_rating = team_summary.get("attack_rating", "")
+        if strong_atk:
+            factors.append({
+                "label": f"Team attack: {atk_rating}",
+                "detail": strong_atk.get("text", ""),
+                "impact": "positive",
+            })
+        elif weak_atk:
+            factors.append({
+                "label": f"Team attack: {atk_rating}",
+                "detail": weak_atk.get("text", ""),
+                "impact": "negative",
+            })
+
+    # Opponent defence — pull the weakest defensive point (best for attacker)
+    if opp_summary:
+        def_points = opp_summary.get("defence") or []
+        weak_def = next((pt for pt in def_points if pt.get("type") == "weak"), None)
+        strong_def = next((pt for pt in def_points if pt.get("type") == "strong"), None)
+        def_rating = opp_summary.get("defence_rating", "")
+        if weak_def:
+            factors.append({
+                "label": f"Opponent defence: {def_rating}",
+                "detail": weak_def.get("text", ""),
+                "impact": "positive",
+            })
+        elif strong_def:
+            factors.append({
+                "label": f"Opponent defence: {def_rating}",
+                "detail": strong_def.get("text", ""),
+                "impact": "negative",
+            })
+
+    # Edge-side vulnerability: pull the opponent defence edge point that
+    # matches this player's field side, if we know it
+    field_side = (pred.get("field_side") or "").lower()
+    if field_side and opp_summary:
+        for pt in opp_summary.get("defence") or []:
+            text = (pt.get("text") or "").lower()
+            if field_side in text and "edge" in text:
+                factors.append({
+                    "label": f"Edge match-up ({field_side})",
+                    "detail": pt.get("text", ""),
+                    "impact": "positive" if pt.get("type") == "weak" else "negative",
+                })
+                break
+
+    if is_home:
+        factors.append({
+            "label": "Home advantage",
+            "detail": "+6% try-rate boost at home (+8% win probability)",
+            "impact": "positive",
+        })
+
+    return factors
+
+
 def _enrich_fixtures(fixtures, model_version, round_number):
     """Add win predictions to all fixtures. Pre-fetches all team data in ONE query."""
     # Collect all teams and matchups (with venues for prefetch)
@@ -481,8 +623,19 @@ async def _refresh_round_cache(round_number, model_version):
             "matches": fixtures,
             "byes": byes,
         }
+        refreshed_at = time.time()
         with _round_cache_lock:
-            _round_cache[cache_key] = (response, time.time())
+            _round_cache[cache_key] = (response, refreshed_at)
+        # Persist to DB so the cache survives restarts
+        try:
+            await asyncio.to_thread(
+                save_cache_entry,
+                _cache_key_str(round_number, model_version),
+                json.dumps(response, default=str),
+                refreshed_at,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist round {round_number} cache to DB: {e}")
         return response
     finally:
         _round_refreshing.discard(cache_key)
@@ -566,7 +719,6 @@ async def get_player(name: str):
 def _compute_match_detail(url, raw, home_players, away_players,
                           model_version, bookmaker_data, is_completed, match_state):
     """Heavy sync computation for match detail — runs in a thread."""
-    import json
 
     season_match = re.search(r'/(\d{4})/', url)
     round_match = re.search(r'/round-(\d+)/', url)
@@ -641,11 +793,19 @@ def _compute_match_detail(url, raw, home_players, away_players,
                                          before_season=before_season, before_round=before_round)
 
     top3_home = [
-        {"name": p["name"], "number": p["number"], "position": p["position"], "try_percentage": p["try_percentage"]}
+        {
+            "name": p["name"], "number": p["number"],
+            "position": p["position"], "try_percentage": p["try_percentage"],
+            "factors": _build_pick_factors(p, home_summary, away_summary, is_home=True),
+        }
         for p in predictions["home"][:3]
     ]
     top3_away = [
-        {"name": p["name"], "number": p["number"], "position": p["position"], "try_percentage": p["try_percentage"]}
+        {
+            "name": p["name"], "number": p["number"],
+            "position": p["position"], "try_percentage": p["try_percentage"],
+            "factors": _build_pick_factors(p, away_summary, home_summary, is_home=False),
+        }
         for p in predictions["away"][:3]
     ]
 
