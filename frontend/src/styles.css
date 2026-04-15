@@ -2097,15 +2097,61 @@ body {
   padding: 0.5rem 0.85rem;
   cursor: pointer;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.1rem;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.65rem;
   transition: background 0.15s;
   min-width: 0;
 }
 
 .search-result:hover {
   background: #f0fdf4;
+}
+
+.search-result-avatar {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-player-headshot {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #f3f4f6;
+}
+
+.search-team-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.search-avatar-fallback {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #6b7280;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.search-result-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
 }
 
 .search-result-name {

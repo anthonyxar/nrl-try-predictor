@@ -2096,8 +2096,8 @@ def update_player_headshots(name_to_url: dict):
 
 def search_players(query: str, limit: int = 20) -> list:
     """Search for players by name. Returns one row per player with their most
-    recent team and position, plus career totals. Uses ILIKE for
-    case-insensitive matching."""
+    recent team and position, career totals, and latest known headshot URL.
+    Uses ILIKE for case-insensitive matching."""
     conn = get_db()
     rows = conn.execute("""
         WITH latest AS (
@@ -2121,7 +2121,15 @@ def search_players(query: str, limit: int = 20) -> list:
                   FROM players p2
                   JOIN matches m2 ON p2.match_id = m2.id
                   WHERE p2.name = l.name AND m2.match_state = 'FullTime') AS total_games,
-               (SELECT COUNT(*) FROM tries t WHERE t.player_name = l.name) AS total_tries
+               (SELECT COUNT(*) FROM tries t WHERE t.player_name = l.name) AS total_tries,
+               (SELECT p3.headshot
+                  FROM players p3
+                  JOIN matches m3 ON p3.match_id = m3.id
+                  WHERE p3.name = l.name
+                    AND p3.headshot IS NOT NULL
+                    AND p3.headshot <> ''
+                  ORDER BY m3.season DESC, m3.round_number DESC
+                  LIMIT 1) AS headshot
         FROM latest l
         ORDER BY l.latest_round DESC
         LIMIT %s

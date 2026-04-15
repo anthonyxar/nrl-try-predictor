@@ -45,6 +45,9 @@ export default function SearchBar({ apiBase }) {
     navigate(`/team?name=${encodeURIComponent(name)}`)
   }
 
+  const getInitials = (name) =>
+    (name || '').split(' ').map(n => n[0] || '').join('').substring(0, 2).toUpperCase()
+
   const hasResults = results && (results.players?.length > 0 || results.teams?.length > 0)
 
   return (
@@ -76,11 +79,29 @@ export default function SearchBar({ apiBase }) {
           {results?.teams?.length > 0 && (
             <div className="search-group">
               <div className="search-group-label">Teams</div>
-              {results.teams.map(name => (
-                <div key={name} className="search-result team-result" onClick={() => handleTeamClick(name)}>
-                  <span className="search-result-name">{name}</span>
-                </div>
-              ))}
+              {results.teams.map(t => {
+                const name = typeof t === 'string' ? t : t.name
+                const themeKey = typeof t === 'string' ? 'nrl' : (t.theme_key || 'nrl')
+                const colour = typeof t === 'string' ? '#333' : (t.colour || '#333')
+                return (
+                  <div key={name} className="search-result team-result" onClick={() => handleTeamClick(name)}>
+                    <div className="search-result-avatar">
+                      <img
+                        className="search-team-logo"
+                        src={`https://www.nrl.com/.theme/${themeKey}/badge.svg`}
+                        alt={name}
+                        onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
+                      />
+                      <div className="search-avatar-fallback" style={{ backgroundColor: colour, display: 'none' }}>
+                        {getInitials(name)}
+                      </div>
+                    </div>
+                    <div className="search-result-text">
+                      <span className="search-result-name">{name}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
           {results?.players?.length > 0 && (
@@ -88,9 +109,24 @@ export default function SearchBar({ apiBase }) {
               <div className="search-group-label">Players</div>
               {results.players.map(p => (
                 <div key={p.name} className="search-result player-result" onClick={() => handlePlayerClick(p.name)}>
-                  <span className="search-result-name">{p.name}</span>
-                  <span className="search-result-meta">{p.position} — {p.team}</span>
-                  <span className="search-result-stats">{p.total_games} games, {p.total_tries} tries</span>
+                  <div className="search-result-avatar">
+                    {p.headshot ? (
+                      <img
+                        className="search-player-headshot"
+                        src={p.headshot}
+                        alt={p.name}
+                        onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
+                      />
+                    ) : null}
+                    <div className="search-avatar-fallback" style={{ display: p.headshot ? 'none' : 'flex' }}>
+                      {getInitials(p.name)}
+                    </div>
+                  </div>
+                  <div className="search-result-text">
+                    <span className="search-result-name">{p.name}</span>
+                    <span className="search-result-meta">{p.position} — {p.team}</span>
+                    <span className="search-result-stats">{p.total_games} games, {p.total_tries} tries</span>
+                  </div>
                 </div>
               ))}
             </div>

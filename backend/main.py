@@ -837,13 +837,31 @@ async def get_accuracy(model_version: int = None, season: int = None):
     return get_accuracy_stats(model_version=model_version, season=season)
 
 
+_TEAM_THEME_MAP = {
+    "Broncos": "broncos", "Raiders": "raiders", "Bulldogs": "bulldogs",
+    "Sharks": "sharks", "Titans": "titans", "Sea Eagles": "sea-eagles",
+    "Storm": "storm", "Knights": "knights", "Cowboys": "cowboys",
+    "Eels": "eels", "Panthers": "panthers", "Rabbitohs": "rabbitohs",
+    "Dragons": "dragons", "Roosters": "roosters", "Warriors": "warriors",
+    "Wests Tigers": "wests-tigers", "Dolphins": "dolphins",
+}
+
+
 @app.get("/api/search")
 async def search(q: str, limit: int = 15):
     """Search for players and teams."""
     if not q or len(q) < 2:
         return {"players": [], "teams": []}
     players = search_players(q, limit=limit)
-    teams = search_teams(q)
+    team_names = search_teams(q)
+    teams = [
+        {
+            "name": name,
+            "theme_key": _TEAM_THEME_MAP.get(name, "nrl"),
+            "colour": _theme_to_colour({"key": _TEAM_THEME_MAP.get(name, "nrl")}),
+        }
+        for name in team_names
+    ]
     return {"players": players, "teams": teams}
 
 
