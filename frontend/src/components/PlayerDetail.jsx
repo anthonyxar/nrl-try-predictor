@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
+import LoadingSpinner from './LoadingSpinner'
 
 export default function PlayerDetail({ apiBase }) {
   const [searchParams] = useSearchParams()
   const playerName = searchParams.get('name')
-  const headshot = searchParams.get('headshot')
+  const headshotParam = searchParams.get('headshot')
   const teamColor = searchParams.get('color') || '#666'
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -22,7 +23,7 @@ export default function PlayerDetail({ apiBase }) {
       .catch(e => { setError(e.message); setLoading(false) })
   }, [apiBase, playerName])
 
-  if (loading) return <div className="loading">Loading player history...</div>
+  if (loading) return <LoadingSpinner text="Loading player history..." />
   if (error) return (
     <div className="error-container">
       <button onClick={() => window.history.back()} className="back-link">&larr; Back</button>
@@ -30,6 +31,11 @@ export default function PlayerDetail({ apiBase }) {
     </div>
   )
   if (!data) return null
+
+  // Prefer the headshot from the URL (passed by MatchDetail). Fall back to the
+  // API response, which is populated from the in-memory cache whenever a
+  // match containing this player has been viewed or synced.
+  const headshot = headshotParam || data.headshot || ''
 
   const seasons = Object.keys(data.seasons_summary).sort((a, b) => b - a)
   const filteredGames = filterSeason === 'all'

@@ -44,6 +44,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# In-memory cache of player headshot URLs keyed by player name. Populated
+# whenever match team-lists are parsed (either from /api/match views or the
+# prediction-sync background task) so /api/player can return a headshot
+# even when the page is opened from search instead of a match.
+_player_headshot_cache: dict[str, str] = {}
+
+
+def _cache_player_headshots(*player_lists):
+    for players in player_lists:
+        if not players:
+            continue
+        for p in players:
+            name = p.get("name")
+            head = p.get("headshot")
+            if name and head:
+                _player_headshot_cache[name] = head
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: init DB, warm cache, run prediction backfill in background."""
@@ -106,6 +124,7 @@ async def _record_prediction_for_match(match_url: str, model_version: int = 3):
     away_players = parse_team_list(raw, "awayTeam")
     if not home_players and not away_players:
         return False
+    _cache_player_headshots(home_players, away_players)
 
     season_m = re.search(r'/(\d{4})/', match_url)
     round_m = re.search(r'/round-(\d+)/', match_url)
@@ -527,6 +546,7 @@ async def get_player(name: str):
 
     return {
         "name": name,
+        "headshot": _player_headshot_cache.get(name, ""),
         "teams": teams,
         "positions": positions,
         "total_games": total_games,
@@ -744,6 +764,7 @@ async def get_match_by_url(url: str, version: int = 3):
             status_code=403,
             detail="Team lists have not been announced for this match yet"
         )
+    _cache_player_headshots(home_players, away_players)
 
     # Fetch bookmaker odds (async) before running sync computation
     match_state = raw.get("matchState", "")
