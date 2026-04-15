@@ -2040,18 +2040,35 @@ def get_weather_scoring_impact() -> dict:
 
 
 def search_players(query: str, limit: int = 20) -> list:
-    """Search for players by name. Returns unique player entries with recent team/position."""
+    """Search for players by name. Returns one row per player with their most
+    recent team and position, plus career totals. Uses ILIKE for
+    case-insensitive matching."""
     conn = get_db()
     rows = conn.execute("""
-        SELECT p.name, p.team, p.position, p.jersey_number,
-               MAX(m.season * 100 + m.round_number) as latest_round,
-               COUNT(DISTINCT m.id) as total_games,
-               (SELECT COUNT(*) FROM tries t WHERE t.player_name = p.name) as total_tries
-        FROM players p
-        JOIN matches m ON p.match_id = m.id
-        WHERE p.name LIKE %s AND m.match_state = 'FullTime'
-        GROUP BY p.name, p.team, p.position, p.jersey_number
-        ORDER BY latest_round DESC
+        WITH latest AS (
+            SELECT DISTINCT ON (p.name)
+                   p.name,
+                   p.team,
+                   p.position,
+                   p.jersey_number,
+                   (m.season * 100 + m.round_number) AS latest_round
+            FROM players p
+            JOIN matches m ON p.match_id = m.id
+            WHERE p.name ILIKE %s AND m.match_state = 'FullTime'
+            ORDER BY p.name, m.season DESC, m.round_number DESC
+        )
+        SELECT l.name,
+               l.team,
+               l.position,
+               l.jersey_number,
+               l.latest_round,
+               (SELECT COUNT(DISTINCT p2.match_id)
+                  FROM players p2
+                  JOIN matches m2 ON p2.match_id = m2.id
+                  WHERE p2.name = l.name AND m2.match_state = 'FullTime') AS total_games,
+               (SELECT COUNT(*) FROM tries t WHERE t.player_name = l.name) AS total_tries
+        FROM latest l
+        ORDER BY l.latest_round DESC
         LIMIT %s
     """, (f"%{query}%", limit)).fetchall()
     conn.close()
@@ -2059,14 +2076,14 @@ def search_players(query: str, limit: int = 20) -> list:
 
 
 def search_teams(query: str) -> list:
-    """Search for team names matching the query."""
+    """Search for team names matching the query (case-insensitive)."""
     conn = get_db()
     rows = conn.execute("""
         SELECT DISTINCT home_team as name FROM matches
-        WHERE home_team LIKE %s
+        WHERE home_team ILIKE %s
         UNION
         SELECT DISTINCT away_team as name FROM matches
-        WHERE away_team LIKE %s
+        WHERE away_team ILIKE %s
         ORDER BY name
     """, (f"%{query}%", f"%{query}%")).fetchall()
     conn.close()
