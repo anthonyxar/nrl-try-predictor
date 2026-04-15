@@ -227,6 +227,19 @@ async def scrape_match_detail(client: httpx.AsyncClient, match_id: int,
                     "team": team_name,
                 }
 
+            # Clean up NRL's headshot URL (mirror nrl_client.parse_team_list)
+            head_img = p.get("headImage", "") or ""
+            if head_img:
+                proxy_marker = "remote.axd?"
+                idx = head_img.find(proxy_marker)
+                if idx >= 0:
+                    head_img = head_img[idx + len(proxy_marker):]
+                elif not head_img.startswith("http"):
+                    head_img = f"{BASE_URL}{head_img}"
+                center_idx = head_img.find("?center=")
+                if center_idx >= 0:
+                    head_img = head_img[:center_idx]
+
             players_data.append({
                 "team": team_name,
                 "side": side,
@@ -234,6 +247,7 @@ async def scrape_match_detail(client: httpx.AsyncClient, match_id: int,
                 "jersey_number": jersey,
                 "position": p.get("position", ""),
                 "is_interchange": not p.get("isOnField", True),
+                "headshot": head_img,
             })
 
         # Parse tries (from scoring summaries)

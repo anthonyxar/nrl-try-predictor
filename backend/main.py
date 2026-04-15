@@ -32,6 +32,7 @@ from database import (
     get_team_attack_defence, get_home_away_win_rate,
     get_team_tries_conceded_by_edge, get_venue_stats,
     prefetch_round_data,
+    get_player_headshot, update_player_headshots,
 )
 from odds_client import (
     add_implied_odds_to_players,
@@ -44,14 +45,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# In-memory cache of player headshot URLs keyed by player name. Populated
-# whenever match team-lists are parsed (either from /api/match views or the
-# prediction-sync background task) so /api/player can return a headshot
-# even when the page is opened from search instead of a match.
-_player_headshot_cache: dict[str, str] = {}
-
-
-def _cache_player_headshots(*player_lists):
+def _backfill_player_headshots(*player_lists):
+    """Given one or more lists of player dicts (from parse_team_list), push
+    any non-empty headshot URLs into the players table for rows that don't
+    yet have one. Used as a lazy backfill path so headshots seen via live
+    /api/match views get persisted for later searches."""
+    name_to_url: dict[str, str] = {}
     for players in player_lists:
         if not players:
             continue
@@ -59,7 +58,12 @@ def _cache_player_headshots(*player_lists):
             name = p.get("name")
             head = p.get("headshot")
             if name and head:
-                _player_headshot_cache[name] = head
+                name_to_url[name] = head
+    if name_to_url:
+        try:
+            update_player_headshots(name_to_url)
+        except Exception as e:
+            logger.warning(f"Failed to backfill player headshots: {e}")
 
 
 @asynccontextmanager
@@ -124,7 +128,7 @@ async def _record_prediction_for_match(match_url: str, model_version: int = 3):
     away_players = parse_team_list(raw, "awayTeam")
     if not home_players and not away_players:
         return False
-    _cache_player_headshots(home_players, away_players)
+    await asyncio.to_thread(_backfill_player_headshots, home_players, away_players)
 
     season_m = re.search(r'/(\d{4})/', match_url)
     round_m = re.search(r'/round-(\d+)/', match_url)
@@ -546,7 +550,7 @@ async def get_player(name: str):
 
     return {
         "name": name,
-        "headshot": _player_headshot_cache.get(name, ""),
+        "headshot": get_player_headshot(name),
         "teams": teams,
         "positions": positions,
         "total_games": total_games,
@@ -764,7 +768,8 @@ async def get_match_by_url(url: str, version: int = 3):
             status_code=403,
             detail="Team lists have not been announced for this match yet"
         )
-    _cache_player_headshots(home_players, away_players)
+    # Backfill headshots in a thread so DB writes don't block the event loop
+    asyncio.create_task(asyncio.to_thread(_backfill_player_headshots, home_players, away_players))
 
     # Fetch bookmaker odds (async) before running sync computation
     match_state = raw.get("matchState", "")

@@ -194,6 +194,7 @@ def init_db():
             jersey_number INTEGER,
             position TEXT,
             is_interchange INTEGER DEFAULT 0,
+            headshot TEXT DEFAULT '',
             FOREIGN KEY (match_id) REFERENCES matches(id)
         )
     """)
@@ -242,6 +243,14 @@ def init_db():
         conn.execute("ALTER TABLE tries ADD COLUMN field_side TEXT DEFAULT ''")
         conn.commit()
         logger.info("Migration: added field_side column to tries table")
+    except psycopg2.errors.DuplicateColumn:
+        conn.rollback()
+
+    # Migration: add headshot column to players (for DBs created before it was in CREATE TABLE)
+    try:
+        conn.execute("ALTER TABLE players ADD COLUMN headshot TEXT DEFAULT ''")
+        conn.commit()
+        logger.info("Migration: added headshot column to players table")
     except psycopg2.errors.DuplicateColumn:
         conn.rollback()
 
@@ -374,12 +383,12 @@ def insert_match(season, round_number, round_title, match_url, match_state,
         conn.close()
 
 
-def insert_player(match_id, team, side, name, jersey_number, position, is_interchange):
+def insert_player(match_id, team, side, name, jersey_number, position, is_interchange, headshot=""):
     conn = get_db()
     conn.execute(
-        """INSERT INTO players (match_id, team, side, name, jersey_number, position, is_interchange)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-        (match_id, team, side, name, jersey_number, position, int(is_interchange))
+        """INSERT INTO players (match_id, team, side, name, jersey_number, position, is_interchange, headshot)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+        (match_id, team, side, name, jersey_number, position, int(is_interchange), headshot or "")
     )
     conn.commit()
     conn.close()
@@ -407,10 +416,10 @@ def bulk_insert_match_data(match_id, players_data, tries_data, interchanges_data
         conn.execute("DELETE FROM interchanges WHERE match_id=%s", (match_id,))
         for p in players_data:
             conn.execute(
-                """INSERT INTO players (match_id, team, side, name, jersey_number, position, is_interchange)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                """INSERT INTO players (match_id, team, side, name, jersey_number, position, is_interchange, headshot)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                 (match_id, p["team"], p["side"], p["name"], p["jersey_number"],
-                 p["position"], int(p["is_interchange"]))
+                 p["position"], int(p["is_interchange"]), p.get("headshot", "") or "")
             )
         for t in tries_data:
             conn.execute(
@@ -2037,6 +2046,52 @@ def get_weather_scoring_impact() -> dict:
 
 
 # ---- Search ----
+
+
+def get_player_headshot(name: str) -> str:
+    """Return the most recent non-empty headshot URL stored for a player, or ''."""
+    if not name:
+        return ""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT p.headshot
+                 FROM players p
+                 JOIN matches m ON p.match_id = m.id
+                WHERE p.name = %s
+                  AND p.headshot IS NOT NULL
+                  AND p.headshot <> ''
+                ORDER BY m.season DESC, m.round_number DESC
+                LIMIT 1""",
+            (name,)
+        ).fetchone()
+        return row["headshot"] if row else ""
+    finally:
+        conn.close()
+
+
+def update_player_headshots(name_to_url: dict):
+    """Backfill players.headshot by player name for any existing rows that
+    don't yet have a headshot. Called whenever fresh NRL team-list data is
+    observed so existing rows (from scrapes that pre-date the column) get
+    populated lazily."""
+    if not name_to_url:
+        return
+    conn = get_db()
+    try:
+        for name, url in name_to_url.items():
+            if not name or not url:
+                continue
+            conn.execute(
+                """UPDATE players
+                      SET headshot = %s
+                    WHERE name = %s
+                      AND (headshot IS NULL OR headshot = '')""",
+                (url, name)
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def search_players(query: str, limit: int = 20) -> list:
