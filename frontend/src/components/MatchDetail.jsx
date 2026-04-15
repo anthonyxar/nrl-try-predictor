@@ -165,7 +165,7 @@ export default function MatchDetail({ apiBase }) {
       <div className="match-overview">
         <div className="match-detail-header">
           <div className="detail-team home">
-            <Link to={`/team?name=${encodeURIComponent(match.home_team)}`} className="detail-team-link" aria-label={`View ${match.home_team} stats`}>
+            <Link to={`/team?name=${encodeURIComponent(match.home_nickname)}`} className="detail-team-link" aria-label={`View ${match.home_team} stats`}>
               <div className="detail-logo-wrap">
                 <img
                   className="detail-logo"
@@ -196,7 +196,7 @@ export default function MatchDetail({ apiBase }) {
             {isCompleted && <span className="detail-ft">Full Time</span>}
           </div>
           <div className="detail-team away">
-            <Link to={`/team?name=${encodeURIComponent(match.away_team)}`} className="detail-team-link" aria-label={`View ${match.away_team} stats`}>
+            <Link to={`/team?name=${encodeURIComponent(match.away_nickname)}`} className="detail-team-link" aria-label={`View ${match.away_team} stats`}>
               <div className="detail-logo-wrap">
                 <img
                   className="detail-logo"
