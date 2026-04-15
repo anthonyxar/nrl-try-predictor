@@ -1,11 +1,12 @@
-FROM python:3.11-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends libpq-dev gcc && rm -rf /var/lib/apt/lists/*
+FROM python:3.11.9-slim-bookworm
 
 WORKDIR /app
 
+# psycopg2-binary ships a bundled libpq and numpy has prebuilt manylinux wheels,
+# so we don't need apt, gcc, or libpq-dev at build time. Forcing --only-binary
+# avoids surprise source builds if a new release lacks a wheel.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --only-binary=:all: -r requirements.txt
 
 COPY . .
 
