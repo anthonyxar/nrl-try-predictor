@@ -5,6 +5,14 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     plan: free
+    # Only rebuild when backend files change. Prevents pure-frontend pushes
+    # from triggering (and sometimes failing) a pointless backend rebuild.
+    buildFilter:
+      paths:
+        - backend/**
+        - render.yaml
+      ignoredPaths:
+        - frontend/**
     envVars:
       - key: ODDS_API_KEY
         sync: false
@@ -16,6 +24,13 @@ services:
     runtime: static
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: ./frontend/dist
+    # Mirror: only rebuild the static site when frontend files change.
+    buildFilter:
+      paths:
+        - frontend/**
+        - render.yaml
+      ignoredPaths:
+        - backend/**
     envVars:
       - key: VITE_API_BASE
         value: https://nrl-try-predictor-backend.onrender.com/api
