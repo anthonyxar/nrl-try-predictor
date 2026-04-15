@@ -6,6 +6,7 @@ import MatchDetail from './components/MatchDetail'
 import PlayerDetail from './components/PlayerDetail'
 import TeamDetail from './components/TeamDetail'
 import AccuracyDashboard from './components/AccuracyDashboard'
+import Models from './components/Models'
 import SearchBar from './components/SearchBar'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api'
@@ -26,6 +27,7 @@ export default function App() {
             </div>
             <div className="header-right">
               <SearchBar apiBase={API_BASE} />
+              <Link to="/models" className="header-link">Models</Link>
               <Link to="/accuracy" className="header-link">Accuracy</Link>
             </div>
           </div>
@@ -39,6 +41,7 @@ export default function App() {
           <Route path="/player" element={<PlayerDetail apiBase={API_BASE} />} />
           <Route path="/team" element={<TeamDetail apiBase={API_BASE} />} />
           <Route path="/accuracy" element={<AccuracyDashboard apiBase={API_BASE} />} />
+          <Route path="/models" element={<Models />} />
         </Routes>
       </main>
     </div>
