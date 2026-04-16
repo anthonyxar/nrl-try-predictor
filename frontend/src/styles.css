@@ -126,14 +126,17 @@ body {
 
 /* Shared navigation bar — used on Draw and MatchDetail pages */
 .nav-bar {
+  position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   background: #ffffff;
   border: 1px solid #d4d4d4;
   border-radius: 12px;
   margin-bottom: 1rem;
+  min-height: 2.75rem;
 }
 
 .nav-bar.sticky {
@@ -144,11 +147,16 @@ body {
   backdrop-filter: saturate(180%) blur(6px);
 }
 
+/* Back button pins to the left so nav-bar-group stays truly centred */
+.nav-bar > .nav-btn:first-child {
+  position: absolute;
+  left: 0.75rem;
+}
+
 .nav-bar-group {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex: 1;
   justify-content: center;
 }
 
@@ -1966,6 +1974,11 @@ body {
     flex-wrap: wrap;
     gap: 0.35rem;
     padding: 0.4rem 0.5rem;
+  }
+
+  /* On mobile, undo absolute positioning so it stacks normally */
+  .nav-bar > .nav-btn:first-child {
+    position: static;
   }
 
   .nav-bar-group {

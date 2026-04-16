@@ -28,7 +28,15 @@ export default function Draw({ apiBase }) {
   const [loading, setLoading] = useState(true)
   const [modelVersion, setModelVersion] = useState(3)
   const [versionLoading, setVersionLoading] = useState(false)
+  const [prevRoundNumber, setPrevRoundNumber] = useState(roundNumber)
   const navigate = useNavigate()
+
+  // Reset to full loading state when the round changes (not just version)
+  if (roundNumber !== prevRoundNumber) {
+    setPrevRoundNumber(roundNumber)
+    setRoundData(null)
+    setLoading(true)
+  }
 
   useEffect(() => {
     const isVersionSwitch = roundData !== null
