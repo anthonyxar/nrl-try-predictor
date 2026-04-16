@@ -18,21 +18,39 @@ export default function MatchDetail({ apiBase }) {
 
   const roundMatch = matchUrl ? matchUrl.match(/round-(\d+)/) : null
   const roundNumber = roundMatch ? roundMatch[1] : null
+  const lastMatchUrlRef = React.useRef(matchUrl)
 
   // Fetch match detail
   useEffect(() => {
     if (!matchUrl) { setError('No match URL provided'); setLoading(false); return }
-    const isVersionSwitch = match !== null
-    if (isVersionSwitch) setVersionLoading(true)
-    else setLoading(true)
+
+    const matchChanged = lastMatchUrlRef.current !== matchUrl
+    lastMatchUrlRef.current = matchUrl
+
+    if (matchChanged) {
+      setMatch(null)
+      setError(null)
+      setLoading(true)
+      setActiveTab('home')
+      setExpandedPick(null)
+      window.scrollTo(0, 0)
+    } else if (match !== null) {
+      setVersionLoading(true)
+    } else {
+      setLoading(true)
+    }
+
+    let cancelled = false
     fetch(`${apiBase}/match?url=${encodeURIComponent(matchUrl)}&version=${modelVersion}`)
       .then(r => {
         if (r.status === 403) throw new Error('Team lists have not been announced for this match yet')
         if (!r.ok) throw new Error('Could not load match data')
         return r.json()
       })
-      .then(data => { setMatch(data); setLoading(false); setVersionLoading(false) })
-      .catch(e => { setError(e.message); setLoading(false); setVersionLoading(false) })
+      .then(data => { if (!cancelled) { setMatch(data); setLoading(false); setVersionLoading(false) } })
+      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false); setVersionLoading(false) } })
+
+    return () => { cancelled = true }
   }, [apiBase, matchUrl, modelVersion])
 
   // Fetch round matches for prev/next navigation
