@@ -14,10 +14,12 @@ export default function MatchDetail({ apiBase }) {
   const [modelVersion, setModelVersion] = useState(3)
   const [versionLoading, setVersionLoading] = useState(false)
   const [expandedPick, setExpandedPick] = useState(null)
+  const [roundMatches, setRoundMatches] = useState(null)
 
   const roundMatch = matchUrl ? matchUrl.match(/round-(\d+)/) : null
   const roundNumber = roundMatch ? roundMatch[1] : null
 
+  // Fetch match detail
   useEffect(() => {
     if (!matchUrl) { setError('No match URL provided'); setLoading(false); return }
     const isVersionSwitch = match !== null
@@ -33,17 +35,43 @@ export default function MatchDetail({ apiBase }) {
       .catch(e => { setError(e.message); setLoading(false); setVersionLoading(false) })
   }, [apiBase, matchUrl, modelVersion])
 
+  // Fetch round matches for prev/next navigation
+  useEffect(() => {
+    if (!roundNumber) return
+    fetch(`${apiBase}/rounds/${roundNumber}?version=${modelVersion}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.matches) setRoundMatches(data.matches) })
+      .catch(() => {})
+  }, [apiBase, roundNumber])
+
+  // Build prev/next match links
+  const currentMatchIndex = roundMatches && matchUrl
+    ? roundMatches.findIndex(m => m.match_url && matchUrl.includes(m.match_url))
+    : -1
+  const prevMatch = currentMatchIndex > 0 ? roundMatches[currentMatchIndex - 1] : null
+  const nextMatch = currentMatchIndex >= 0 && currentMatchIndex < (roundMatches?.length || 0) - 1
+    ? roundMatches[currentMatchIndex + 1] : null
+
+  const matchNavLabel = (m) => {
+    if (!m) return ''
+    return `${m.home_team || '?'} vs ${m.away_team || '?'}`
+  }
+
   if (loading) return (
     <div className="match-detail">
-      <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="back-link">
-        &larr; Back to {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
-      </Link>
+      <div className="nav-bar sticky">
+        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="nav-btn">
+          &larr; {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
+        </Link>
+      </div>
       <LoadingSpinner text="Crunching the numbers..." />
     </div>
   )
   if (error) return (
     <div className="error-container">
-      <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="back-link">&larr; Back</Link>
+      <div className="nav-bar sticky">
+        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="nav-btn">&larr; Back</Link>
+      </div>
       <div className="error-message">{error}</div>
     </div>
   )
@@ -103,10 +131,29 @@ export default function MatchDetail({ apiBase }) {
 
   return (
     <div className="match-detail">
-      <div className="match-detail-topbar sticky">
-        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="back-link">
-          &larr; Back to {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
+      <div className="nav-bar sticky">
+        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="nav-btn">
+          &larr; {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
         </Link>
+        {roundMatches && roundMatches.length > 1 && (
+          <div className="nav-bar-group">
+            {prevMatch ? (
+              <Link to={`/match?url=${encodeURIComponent(prevMatch.match_url)}`} className="nav-btn" title={matchNavLabel(prevMatch)}>
+                &larr; {matchNavLabel(prevMatch)}
+              </Link>
+            ) : (
+              <span className="nav-btn disabled">&larr; —</span>
+            )}
+            <span className="nav-bar-divider" aria-hidden>|</span>
+            {nextMatch ? (
+              <Link to={`/match?url=${encodeURIComponent(nextMatch.match_url)}`} className="nav-btn" title={matchNavLabel(nextMatch)}>
+                {matchNavLabel(nextMatch)} &rarr;
+              </Link>
+            ) : (
+              <span className="nav-btn disabled">— &rarr;</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Model version selector */}

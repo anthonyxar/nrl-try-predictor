@@ -50,9 +50,9 @@ export default function Draw({ apiBase }) {
 
   if (loading) return (
     <div className="draw">
-      <div className="draw-header">
-        <Link to="/" className="back-link">&larr; All Rounds</Link>
-        <h2>Round {roundNumber}</h2>
+      <div className="nav-bar sticky">
+        <Link to="/" className="nav-btn">&larr; All Rounds</Link>
+        <h2 className="nav-bar-title">Round {roundNumber}</h2>
       </div>
       <LoadingSpinner text={`Loading Round ${roundNumber} predictions...`} />
     </div>
@@ -89,23 +89,23 @@ export default function Draw({ apiBase }) {
 
   return (
     <div className="draw">
-      <div className="draw-header sticky">
-        <Link to="/" className="back-link">&larr; All Rounds</Link>
-        <div className="round-nav">
+      <div className="nav-bar sticky">
+        <Link to="/" className="nav-btn">&larr; All Rounds</Link>
+        <div className="nav-bar-group">
           {prevRound ? (
-            <Link to={`/round/${prevRound}`} className="round-nav-btn" aria-label={`Previous round (Round ${prevRound})`}>
+            <Link to={`/round/${prevRound}`} className="nav-btn" aria-label={`Previous round (Round ${prevRound})`}>
               &larr; R{prevRound}
             </Link>
           ) : (
-            <span className="round-nav-btn disabled" aria-hidden>&larr; R—</span>
+            <span className="nav-btn disabled" aria-hidden>&larr; R—</span>
           )}
-          <h2 className="round-nav-title">{roundData.name}</h2>
+          <h2 className="nav-bar-title">{roundData.name}</h2>
           {nextRound ? (
-            <Link to={`/round/${nextRound}`} className="round-nav-btn" aria-label={`Next round (Round ${nextRound})`}>
+            <Link to={`/round/${nextRound}`} className="nav-btn" aria-label={`Next round (Round ${nextRound})`}>
               R{nextRound} &rarr;
             </Link>
           ) : (
-            <span className="round-nav-btn disabled" aria-hidden>R— &rarr;</span>
+            <span className="nav-btn disabled" aria-hidden>R— &rarr;</span>
           )}
         </div>
       </div>
