@@ -28,23 +28,29 @@ export default function Draw({ apiBase }) {
   const [loading, setLoading] = useState(true)
   const [modelVersion, setModelVersion] = useState(3)
   const [versionLoading, setVersionLoading] = useState(false)
-  const [prevRoundNumber, setPrevRoundNumber] = useState(roundNumber)
+  const lastRoundRef = React.useRef(roundNumber)
   const navigate = useNavigate()
 
-  // Reset to full loading state when the round changes (not just version)
-  if (roundNumber !== prevRoundNumber) {
-    setPrevRoundNumber(roundNumber)
-    setRoundData(null)
-    setLoading(true)
-  }
-
+  // Full loading when round changes, inline version switch otherwise
   useEffect(() => {
-    const isVersionSwitch = roundData !== null
-    if (isVersionSwitch) setVersionLoading(true)
-    else setLoading(true)
+    const roundChanged = lastRoundRef.current !== roundNumber
+    lastRoundRef.current = roundNumber
+
+    if (roundChanged) {
+      setRoundData(null)
+      setLoading(true)
+      window.scrollTo(0, 0)
+    } else if (roundData !== null) {
+      setVersionLoading(true)
+    } else {
+      setLoading(true)
+    }
+
+    let cancelled = false
     fetch(`${apiBase}/rounds/${roundNumber}?version=${modelVersion}`)
       .then(r => r.json())
       .then(data => {
+        if (cancelled) return
         setRoundData(data)
         setLoading(false)
         setVersionLoading(false)
@@ -53,7 +59,9 @@ export default function Draw({ apiBase }) {
         if (rn > 1) fetch(`${apiBase}/rounds/${rn - 1}?version=${modelVersion}`)
         if (rn < 27) fetch(`${apiBase}/rounds/${rn + 1}?version=${modelVersion}`)
       })
-      .catch(() => { setLoading(false); setVersionLoading(false) })
+      .catch(() => { if (!cancelled) { setLoading(false); setVersionLoading(false) } })
+
+    return () => { cancelled = true }
   }, [apiBase, roundNumber, modelVersion])
 
   if (loading) return (
