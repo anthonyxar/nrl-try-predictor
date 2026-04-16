@@ -137,21 +137,25 @@ export default function MatchDetail({ apiBase }) {
         </Link>
         {roundMatches && roundMatches.length > 1 && (
           <div className="nav-bar-group">
-            {prevMatch ? (
-              <Link to={`/match?url=${encodeURIComponent(prevMatch.match_url)}`} className="nav-btn" title={matchNavLabel(prevMatch)}>
-                &larr; {matchNavLabel(prevMatch)}
-              </Link>
-            ) : (
-              <span className="nav-btn disabled">&larr; —</span>
-            )}
+            <div className="nav-bar-side nav-bar-side-left">
+              {prevMatch ? (
+                <Link to={`/match?url=${encodeURIComponent(prevMatch.match_url)}`} className="nav-btn" title={matchNavLabel(prevMatch)}>
+                  &larr; {matchNavLabel(prevMatch)}
+                </Link>
+              ) : (
+                <span className="nav-btn disabled">&larr; —</span>
+              )}
+            </div>
             <span className="nav-bar-divider" aria-hidden>|</span>
-            {nextMatch ? (
-              <Link to={`/match?url=${encodeURIComponent(nextMatch.match_url)}`} className="nav-btn" title={matchNavLabel(nextMatch)}>
-                {matchNavLabel(nextMatch)} &rarr;
-              </Link>
-            ) : (
-              <span className="nav-btn disabled">— &rarr;</span>
-            )}
+            <div className="nav-bar-side nav-bar-side-right">
+              {nextMatch ? (
+                <Link to={`/match?url=${encodeURIComponent(nextMatch.match_url)}`} className="nav-btn" title={matchNavLabel(nextMatch)}>
+                  {matchNavLabel(nextMatch)} &rarr;
+                </Link>
+              ) : (
+                <span className="nav-btn disabled">— &rarr;</span>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -168,10 +168,25 @@ body {
   margin: 0;
 }
 
+.nav-bar-side {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.nav-bar-side-left {
+  justify-content: flex-end;
+}
+
+.nav-bar-side-right {
+  justify-content: flex-start;
+}
+
 .nav-bar-divider {
   color: #d4d4d4;
   font-size: 0.85rem;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .nav-btn {

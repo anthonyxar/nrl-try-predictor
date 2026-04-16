@@ -100,21 +100,25 @@ export default function Draw({ apiBase }) {
       <div className="nav-bar sticky">
         <Link to="/" className="nav-btn">&larr; All Rounds</Link>
         <div className="nav-bar-group">
-          {prevRound ? (
-            <Link to={`/round/${prevRound}`} className="nav-btn" aria-label={`Previous round (Round ${prevRound})`}>
-              &larr; R{prevRound}
-            </Link>
-          ) : (
-            <span className="nav-btn disabled" aria-hidden>&larr; R—</span>
-          )}
+          <div className="nav-bar-side nav-bar-side-left">
+            {prevRound ? (
+              <Link to={`/round/${prevRound}`} className="nav-btn" aria-label={`Previous round (Round ${prevRound})`}>
+                &larr; R{prevRound}
+              </Link>
+            ) : (
+              <span className="nav-btn disabled" aria-hidden>&larr; R—</span>
+            )}
+          </div>
           <h2 className="nav-bar-title">{roundData.name}</h2>
-          {nextRound ? (
-            <Link to={`/round/${nextRound}`} className="nav-btn" aria-label={`Next round (Round ${nextRound})`}>
-              R{nextRound} &rarr;
-            </Link>
-          ) : (
-            <span className="nav-btn disabled" aria-hidden>R— &rarr;</span>
-          )}
+          <div className="nav-bar-side nav-bar-side-right">
+            {nextRound ? (
+              <Link to={`/round/${nextRound}`} className="nav-btn" aria-label={`Next round (Round ${nextRound})`}>
+                R{nextRound} &rarr;
+              </Link>
+            ) : (
+              <span className="nav-btn disabled" aria-hidden>R— &rarr;</span>
+            )}
+          </div>
         </div>
       </div>
 
