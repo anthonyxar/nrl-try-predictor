@@ -322,6 +322,22 @@ def init_db():
         )
     """)
 
+    # Application log mirror — lets logs be inspected directly in Supabase
+    # (Table Editor / SQL Editor) instead of relying on Render's log
+    # retention window. `source` distinguishes the long-running backend
+    # from the standalone scrape_job.py cron process.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_logs (
+            id SERIAL PRIMARY KEY,
+            logged_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            source TEXT NOT NULL,
+            level TEXT NOT NULL,
+            logger_name TEXT,
+            message TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_app_logs_logged_at ON app_logs(logged_at DESC)")
+
     conn.commit()
 
     # Venue/weather columns on matches table
@@ -2279,6 +2295,37 @@ def delete_cache_entry(key: str) -> None:
     conn = get_db()
     try:
         conn.execute("DELETE FROM cache_store WHERE key=%s", (key,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- Application log mirror (see log_handler.SupabaseLogHandler) ---
+
+def insert_log_entry(source: str, level: str, logger_name: str, message: str) -> None:
+    """Insert one row into app_logs. Raises on failure — the log handler
+    that calls this is responsible for catching and dropping failures
+    silently, so a DB hiccup can never crash the app via its own logging."""
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO app_logs (source, level, logger_name, message) VALUES (%s, %s, %s, %s)",
+            (source, level, logger_name, (message or "")[:8000]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def prune_old_logs(days: int = 14) -> None:
+    """Delete app_logs rows older than `days`, to bound table growth on a
+    free-tier DB. Called at startup rather than on a separate schedule."""
+    conn = get_db()
+    try:
+        conn.execute(
+            "DELETE FROM app_logs WHERE logged_at < now() - (%s || ' days')::interval",
+            (days,),
+        )
         conn.commit()
     finally:
         conn.close()

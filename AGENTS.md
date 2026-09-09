@@ -65,6 +65,9 @@ Every frontend data fetch goes through `frontend/src/api.js`'s `fetchJson()`, wh
 ### Render free-tier cold starts
 The backend (`render.yaml`) runs on Render's free plan, which sleeps after 15 min of inactivity; the first request after sleep can take 30-60s+. This is mitigated by an external UptimeRobot ping hitting `/api/health` — if the app seems to hang for a long time on first load, check that the UptimeRobot monitor is still active and pointed at `/api/health` specifically (Render intercepts `/` and `/robots.txt` for a sleeping service without waking it, so pinging those does nothing).
 
+### Logs mirrored to Supabase
+`log_handler.py`'s `SupabaseLogHandler` attaches to the root logger and writes every INFO+ log record into the `app_logs` table, so logs are browsable directly in Supabase (Table Editor / SQL Editor) rather than depending on Render's log retention. Attached once per process, after `init_db()` (the table must exist first): in `main.py`'s `lifespan()` with `source="backend"`, and in `scrape_job.py`'s `main()` with `source="scraper"` — filter on that column to tell the two apart. `prune_old_logs()` runs at the same point in both, deleting rows older than 14 days to bound table growth. The insert runs synchronously wherever the log call happens (deliberate — log volume is low, see the docstring); never add a `logger.info`/`logger.warning` call inside a genuinely hot per-request path without considering that it now costs a DB write.
+
 ### Field-side / edge attribution
 Jersey numbers 1-13 map to a field side (`left`/`right`/`middle`/`fullback`) via `JERSEY_FIELD_SIDE` (duplicated in `model.py` and `scraper.py` — keep in sync). For bench players (14+), `scraper.py`'s `_determine_field_side` walks interchange timeline data to infer which starter's edge they inherited. This underpins the "edge vulnerability" factor in the model and the value-picks logic.
 

@@ -35,6 +35,7 @@ from database import (
     prefetch_round_data,
     get_player_headshot, update_player_headshots,
     save_cache_entry, load_all_cache_entries,
+    prune_old_logs,
 )
 from odds_client import (
     add_implied_odds_to_players,
@@ -42,6 +43,7 @@ from odds_client import (
     lookup_bookmaker_odds,
     has_api_key as has_odds_api_key,
 )
+import log_handler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,6 +74,15 @@ def _backfill_player_headshots(*player_lists):
 async def lifespan(app: FastAPI):
     """Startup: init DB, warm cache, run prediction backfill in background."""
     init_db()
+
+    # Mirror logs into Supabase (app_logs table) now that the table exists,
+    # so operational visibility survives beyond Render's log retention.
+    log_handler.attach(source="backend")
+    try:
+        prune_old_logs()
+    except Exception as e:
+        logger.warning(f"Failed to prune old app_logs rows: {e}")
+
     existing = get_total_match_count()
     logger.info(f"Starting up. DB has {existing} matches.")
 
