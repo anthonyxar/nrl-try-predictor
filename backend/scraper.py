@@ -6,6 +6,7 @@ Runs at startup and stores everything in SQLite.
 
 import asyncio
 import httpx
+import json
 import logging
 import time
 
@@ -22,6 +23,32 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json, text/html, */*",
 }
+
+# NRL fronts /draw/data with an OpenID Connect "silent SSO" check: a request
+# with no session gets a redirect that dead-ends without a real login, but
+# that same redirect response sets an anonymous `nrl_sso_probed` cookie, and
+# retrying the same URL with it present succeeds directly (see nrl_client.py
+# for the full explanation). follow_redirects is off on both clients below
+# so we see the redirect and can retry, instead of auto-following into the
+# dead end.
+_REDIRECT_STATUS_CODES = (301, 302, 303, 307, 308)
+
+
+async def _get_json(client: httpx.AsyncClient, url: str, error_label: str):
+    """GET a URL from nrl.com and return its parsed JSON, or None on any
+    failure — retries once on NRL's SSO probe redirect."""
+    resp = await client.get(url)
+    if resp.status_code in _REDIRECT_STATUS_CODES:
+        resp = await client.get(url)
+    if resp.status_code != 200:
+        logger.warning(f"Failed to fetch {error_label}: {resp.status_code}")
+        return None
+    try:
+        return resp.json()
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Invalid JSON fetching {error_label}: {e}")
+        return None
+
 
 # Season config: (year, total_rounds_including_finals)
 SEASONS = [
@@ -42,7 +69,7 @@ async def scrape_all():
     existing = get_total_match_count()
     logger.info(f"Database has {existing} completed matches. Starting scrape...")
 
-    async with httpx.AsyncClient(headers=HEADERS, timeout=20.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(headers=HEADERS, timeout=20.0, follow_redirects=False) as client:
         for season, total_rounds in SEASONS:
             for rnd in range(1, total_rounds + 1):
                 if is_round_scraped(season, rnd):
@@ -65,12 +92,9 @@ async def scrape_all():
 async def scrape_round(client: httpx.AsyncClient, season: int, round_number: int):
     """Scrape all matches in a round."""
     url = f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={season}&round={round_number}"
-    resp = await client.get(url)
-    if resp.status_code != 200:
-        logger.warning(f"Failed to fetch {season} R{round_number}: {resp.status_code}")
+    data = await _get_json(client, url, f"{season} R{round_number}")
+    if data is None:
         return
-
-    data = resp.json()
     fixtures = data.get("fixtures", [])
 
     for match in fixtures:
@@ -189,12 +213,9 @@ async def scrape_match_detail(client: httpx.AsyncClient, match_id: int,
                                match_url: str, home_team: str, away_team: str):
     """Fetch and store team lists, try scorers, and interchanges for a single match."""
     detail_url = f"{BASE_URL}{match_url.rstrip('/')}/data"
-    resp = await client.get(detail_url)
-    if resp.status_code != 200:
-        logger.warning(f"Failed to fetch match detail: {detail_url}")
+    data = await _get_json(client, detail_url, f"match detail {detail_url}")
+    if data is None:
         return
-
-    data = resp.json()
     players_data = []
     tries_data = []
     interchanges_data = []
@@ -381,7 +402,7 @@ async def sync_current_season():
     logger.info("Starting current season sync...")
     new_matches = 0
 
-    async with httpx.AsyncClient(headers=HEADERS, timeout=20.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(headers=HEADERS, timeout=20.0, follow_redirects=False) as client:
         for rnd in range(1, CURRENT_SEASON_ROUNDS + 1):
             # Skip rounds already fully scraped — they won't change
             if is_round_scraped(CURRENT_SEASON, rnd):
@@ -389,10 +410,9 @@ async def sync_current_season():
 
             url = f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={CURRENT_SEASON}&round={rnd}"
             try:
-                resp = await client.get(url)
-                if resp.status_code != 200:
+                data = await _get_json(client, url, f"{CURRENT_SEASON} R{rnd}")
+                if data is None:
                     continue
-                data = resp.json()
                 fixtures = data.get("fixtures", [])
                 if not fixtures:
                     continue

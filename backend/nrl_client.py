@@ -28,6 +28,45 @@ HEADERS = {
 _nrl_api_cache = {}  # key -> (data, timestamp)
 _NRL_CACHE_TTL = 60  # 1 minute
 
+# A single persistent client, reused across every call. This matters beyond
+# connection pooling: NRL's site fronts /draw/data with an OpenID Connect
+# "silent SSO" check. A request with no session gets a 302 to
+# /account/login?prompt=none&..., which chains to account.nrl.com and
+# dead-ends without a real login — but that very first 302 response also
+# sets an anonymous `nrl_sso_probed` cookie, and simply retrying the same
+# URL with that cookie present succeeds directly with a 200 and real JSON,
+# no login required. A fresh httpx.AsyncClient() per call (the previous
+# design) threw that cookie away before the next request, so every single
+# call hit the dead-end chain. follow_redirects is off on purpose: we want
+# to see the 302 and retry the original URL, not get carried off into the
+# OIDC chain by auto-follow.
+_client = httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=False)
+
+_REDIRECT_STATUS_CODES = (301, 302, 303, 307, 308)
+
+
+async def _get_json(url: str, error_label: str) -> Optional[dict]:
+    """GET a URL from nrl.com and return its parsed JSON, or None on any
+    failure (network error, non-200, non-JSON body) — callers already treat
+    None as "couldn't fetch" and degrade gracefully."""
+    try:
+        resp = await _client.get(url)
+        if resp.status_code in _REDIRECT_STATUS_CODES:
+            # NRL's SSO probe redirect — the cookie it just set is now in
+            # our jar, so retry the same URL once rather than following the
+            # redirect into the dead-end OIDC chain.
+            resp = await _client.get(url)
+        if resp.status_code != 200:
+            logger.error(f"NRL API returned {resp.status_code} for {error_label}")
+            return None
+        return resp.json()
+    except httpx.HTTPError as e:
+        logger.error(f"NRL API request failed for {error_label}: {e}")
+        return None
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"NRL API returned invalid JSON for {error_label}: {e}")
+        return None
+
 
 async def fetch_round(round_number: int) -> Optional[dict]:
     """Fetch all fixtures for a given round from the NRL API."""
@@ -38,21 +77,8 @@ async def fetch_round(round_number: int) -> Optional[dict]:
         return cached[0]
 
     url = f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={SEASON}&round={round_number}"
-    try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                logger.error(f"NRL round API returned {resp.status_code}")
-                return None
-            data = resp.json()
-    except httpx.HTTPError as e:
-        logger.error(f"NRL round API request failed for round {round_number}: {e}")
-        return None
-    except (json.JSONDecodeError, ValueError) as e:
-        # NRL's API occasionally returns a 200 with a non-JSON body (empty,
-        # HTML error page, etc.) — treat it the same as a fetch failure
-        # rather than crashing the request.
-        logger.error(f"NRL round API returned invalid JSON for round {round_number}: {e}")
+    data = await _get_json(url, f"round {round_number}")
+    if data is None:
         return None
     _nrl_api_cache[cache_key] = (data, now)
     return data
@@ -66,19 +92,7 @@ async def fetch_match_detail(match_url_path: str) -> Optional[dict]:
     # Ensure trailing slash and append 'data'
     path = match_url_path.rstrip("/") + "/data"
     url = f"{BASE_URL}{path}"
-    try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                logger.error(f"NRL match API returned {resp.status_code} for {url}")
-                return None
-            return resp.json()
-    except httpx.HTTPError as e:
-        logger.error(f"NRL match API request failed for {url}: {e}")
-        return None
-    except (json.JSONDecodeError, ValueError) as e:
-        logger.error(f"NRL match API returned invalid JSON for {url}: {e}")
-        return None
+    return await _get_json(url, url)
 
 
 def parse_fixtures(raw_data: dict) -> list:
