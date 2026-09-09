@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
 
 from nrl_client import (
     fetch_round, fetch_match_detail,
@@ -353,6 +353,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Without this, an unhandled exception skips CORSMiddleware entirely —
+    Starlette's default 500 response carries no Access-Control-Allow-Origin
+    header, so the browser reports a misleading CORS error instead of the
+    real 500. Registering a handler keeps the response inside the normal
+    middleware chain (CORS headers get attached) and logs the real cause
+    (mirrored to Supabase's app_logs table via log_handler)."""
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):

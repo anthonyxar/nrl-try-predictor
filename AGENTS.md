@@ -62,6 +62,9 @@ Static/legacy mock data (hardcoded 2026 squads and fixtures). **Not imported by 
 ### Frontend fetch timeout
 Every frontend data fetch goes through `frontend/src/api.js`'s `fetchJson()`, which aborts after 45s and throws a descriptive error instead of hanging forever. Plain `fetch()` has no built-in timeout — a component that bypasses `fetchJson` and calls `fetch()` directly reintroduces the "infinite spinner" failure mode (see `docs/adr/0002-frontend-fetch-timeout.md`). Always use `fetchJson` for new API calls, and give the component an error state with a retry action.
 
+### Unhandled exceptions must go through the global handler
+`main.py` registers `@app.exception_handler(Exception)`. Without it, an unhandled exception in a route bypasses `CORSMiddleware`'s header injection entirely, and the browser reports a misleading "CORS blocked" error instead of the real 500 — this is a known FastAPI/Starlette gotcha, not a CORS config problem, and it's easy to burn time debugging the wrong thing if you don't know it. The handler logs the real exception (`exc_info=True`, mirrored to `app_logs`) and returns a normal JSON 500 that keeps its CORS headers. Don't remove it, and don't add other bare `except Exception: pass` swallows in route handlers that would prevent it from firing.
+
 ### Render free-tier cold starts
 The backend (`render.yaml`) runs on Render's free plan, which sleeps after 15 min of inactivity; the first request after sleep can take 30-60s+. This is mitigated by an external UptimeRobot ping hitting `/api/health` — if the app seems to hang for a long time on first load, check that the UptimeRobot monitor is still active and pointed at `/api/health` specifically (Render intercepts `/` and `/robots.txt` for a sleeping service without waking it, so pinging those does nothing).
 
