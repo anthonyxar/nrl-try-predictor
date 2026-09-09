@@ -72,8 +72,35 @@ def _backfill_player_headshots(*player_lists):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: init DB, warm cache, run prediction backfill in background."""
-    init_db()
+    """Bind the port immediately and run DB init in the background.
+
+    init_db() used to run synchronously here, before the app could bind its
+    port — if the DB was unreachable at boot (a paused Supabase project, a
+    stale DATABASE_URL, a transient network blip), the whole process would
+    crash before Render's health check could ever pass, so the entire site
+    went down and every redeploy failed the same way until the DB issue was
+    fixed AND a fresh deploy succeeded. Now DB init retries in the
+    background: the app comes up and serves /api/health right away
+    regardless of DB state, DB-dependent endpoints return clear errors
+    (surfaced by the frontend's fetchJson timeout/error UI) until it
+    connects, and the rest of startup (cache warm, prediction backfill)
+    proceeds automatically once it does.
+    """
+    tasks = [asyncio.create_task(_startup_sequence())]
+    yield
+    for t in tasks:
+        t.cancel()
+
+
+async def _startup_sequence():
+    """Retry DB init until it succeeds, then run the rest of startup."""
+    while True:
+        try:
+            await asyncio.to_thread(init_db)
+            break
+        except Exception as e:
+            logger.error(f"DB init failed, will retry in 30s: {e}")
+            await asyncio.sleep(30)
 
     # Mirror logs into Supabase (app_logs table) now that the table exists,
     # so operational visibility survives beyond Render's log retention.
@@ -90,11 +117,8 @@ async def lifespan(app: FastAPI):
     # immediately, even before the background warmup re-runs.
     _restore_cache_from_db()
 
-    pred_task = asyncio.create_task(_prediction_sync())
-    warmup_task = asyncio.create_task(_warm_cache())
-    yield
-    pred_task.cancel()
-    warmup_task.cancel()
+    asyncio.create_task(_prediction_sync())
+    asyncio.create_task(_warm_cache())
 
 
 def _cache_key_str(round_number: int) -> str:
