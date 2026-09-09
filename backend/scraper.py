@@ -58,7 +58,7 @@ SEASONS = [
     (2023, 31),  # 27 rounds + 4 finals
     (2024, 31),  # 27 rounds + 4 finals
     (2025, 31),  # 27 rounds + 4 finals
-    (2026, 27),  # current season - 27 rounds (only completed ones)
+    (2026, 31),  # current season - 27 rounds + 4 finals weeks
 ]
 
 
@@ -350,7 +350,7 @@ async def scrape_match_detail(client: httpx.AsyncClient, match_id: int,
 
 
 CURRENT_SEASON = 2026
-CURRENT_SEASON_ROUNDS = 27
+CURRENT_SEASON_ROUNDS = 31  # 27 regular-season rounds + 4 finals weeks
 
 
 def _match_exists(match_url: str) -> bool:

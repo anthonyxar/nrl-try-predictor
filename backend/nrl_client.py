@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://www.nrl.com"
 COMPETITION_ID = 111
 SEASON = 2026
-TOTAL_ROUNDS = 27
+# 27 regular-season rounds + 4 finals weeks (Qualifying/Elimination, Semi,
+# Preliminary, Grand Final) — matches every completed season's structure
+# (see scraper.py's SEASONS table). NRL's API doesn't error for a round
+# beyond what's currently drawn — it just echoes the latest available
+# round — so a request past the real end of season degrades to showing
+# that round again rather than failing.
+TOTAL_ROUNDS = 31
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -95,17 +101,24 @@ async def fetch_match_detail(match_url_path: str) -> Optional[dict]:
     return await _get_json(url, url)
 
 
-def parse_fixtures(raw_data: dict) -> list:
+def parse_fixtures(raw_data: dict) -> tuple:
     """
     Parse raw NRL draw data into a clean list of fixtures.
     Structure: raw_data["fixtures"] = list of match dicts
+    Returns (fixtures, byes, round_title) — round_title comes straight from
+    NRL (e.g. "Round 12", "Finals Week 1") so finals rounds display
+    correctly instead of a generic "Round N".
     """
     fixtures = []
     raw_fixtures = raw_data.get("fixtures", [])
+    round_title = ""
 
     for match in raw_fixtures:
         if not isinstance(match, dict):
             continue
+
+        if not round_title:
+            round_title = match.get("roundTitle", "")
 
         home = match.get("homeTeam", {})
         away = match.get("awayTeam", {})
@@ -151,7 +164,7 @@ def parse_fixtures(raw_data: dict) -> list:
         if isinstance(bye, dict):
             byes.append(bye.get("teamNickName", "Unknown"))
 
-    return fixtures, byes
+    return fixtures, byes, round_title
 
 
 def parse_team_list(raw_data: dict, team_key: str) -> list:

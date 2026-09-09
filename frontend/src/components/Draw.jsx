@@ -3,6 +3,9 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import { fetchJson } from '../api'
 
+// 27 regular-season rounds + 4 finals weeks — must match backend/nrl_client.py's TOTAL_ROUNDS
+const TOTAL_ROUNDS = 31
+
 const TEAM_COLOURS = {
   'broncos': '#6D2735',
   'raiders': '#56B947',
@@ -46,7 +49,7 @@ export default function Draw({ apiBase }) {
         // Prefetch adjacent rounds in background
         const rn = parseInt(roundNumber)
         if (rn > 1) fetchJson(`${apiBase}/rounds/${rn - 1}`).catch(() => {})
-        if (rn < 27) fetchJson(`${apiBase}/rounds/${rn + 1}`).catch(() => {})
+        if (rn < TOTAL_ROUNDS) fetchJson(`${apiBase}/rounds/${rn + 1}`).catch(() => {})
       })
       .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
 
@@ -99,7 +102,7 @@ export default function Draw({ apiBase }) {
 
   const currentRound = parseInt(roundNumber)
   const prevRound = currentRound > 1 ? currentRound - 1 : null
-  const nextRound = currentRound < 27 ? currentRound + 1 : null
+  const nextRound = currentRound < TOTAL_ROUNDS ? currentRound + 1 : null
 
   return (
     <div className="draw">

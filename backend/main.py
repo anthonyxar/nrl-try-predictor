@@ -658,11 +658,11 @@ async def _refresh_round_cache(round_number):
         raw = await fetch_round(round_number)
         if raw is None:
             return None
-        fixtures, byes = parse_fixtures(raw)
+        fixtures, byes, round_title = parse_fixtures(raw)
         fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, round_number)
         response = {
             "round": round_number,
-            "name": f"Round {round_number}",
+            "name": round_title or f"Round {round_number}",
             "matches": fixtures,
             "byes": byes,
         }
