@@ -380,8 +380,11 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
             # Round page: 2 min cache, serve stale while revalidating
             response.headers["Cache-Control"] = "public, max-age=120, stale-while-revalidate=300"
         elif path.startswith("/api/rounds"):
-            # Rounds list: changes rarely
-            response.headers["Cache-Control"] = "public, max-age=600"
+            # Rounds list: names can change during finals (an undrawn
+            # round's placeholder label gets replaced once NRL publishes
+            # the real draw), so match the same 2-min window as an
+            # individual round page rather than the old 10-min cache.
+            response.headers["Cache-Control"] = "public, max-age=120, stale-while-revalidate=300"
         elif path.startswith("/api/accuracy"):
             response.headers["Cache-Control"] = "public, max-age=300"
         elif path.startswith("/api/team") or path.startswith("/api/player"):
