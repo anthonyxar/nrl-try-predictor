@@ -119,11 +119,6 @@ body {
   font-weight: 700;
 }
 
-.match-count {
-  font-size: 0.85rem;
-  color: #666666;
-}
-
 /* Shared navigation bar — used on Draw and MatchDetail pages */
 .nav-bar {
   position: relative;

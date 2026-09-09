@@ -45,8 +45,7 @@ export default function WeekSelector({ apiBase }) {
             className="round-card"
             onClick={() => navigate(`/round/${num}`)}
           >
-            <span className="round-number">Round {num}</span>
-            <span className="match-count">{info.match_count} matches</span>
+            <span className="round-number">{info.name || `Round ${num}`}</span>
           </button>
         ))}
       </div>
