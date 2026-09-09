@@ -86,6 +86,9 @@ def _get_pool():
             dsn += f"{sep}sslmode=require"
         _pool = psycopg2.pool.ThreadedConnectionPool(
             2, 20, dsn,
+            # connect_timeout bounds how long a cold-started container can
+            # block on the DB before the FastAPI app starts serving requests.
+            connect_timeout=10,
             options="-c statement_timeout=30000",
         )
         atexit.register(_close_pool)

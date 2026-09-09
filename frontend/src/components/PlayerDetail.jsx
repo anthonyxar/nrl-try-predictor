@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
+import { fetchJson } from '../api'
 
 export default function PlayerDetail({ apiBase }) {
   const [searchParams] = useSearchParams()
@@ -11,23 +12,25 @@ export default function PlayerDetail({ apiBase }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filterSeason, setFilterSeason] = useState('all')
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     if (!playerName) { setError('No player name provided'); setLoading(false); return }
-    fetch(`${apiBase}/player?name=${encodeURIComponent(playerName)}`)
-      .then(r => {
-        if (!r.ok) throw new Error('Could not load player data')
-        return r.json()
-      })
-      .then(d => { setData(d); setLoading(false) })
-      .catch(e => { setError(e.message); setLoading(false) })
-  }, [apiBase, playerName])
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    fetchJson(`${apiBase}/player?name=${encodeURIComponent(playerName)}`)
+      .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
+      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
+    return () => { cancelled = true }
+  }, [apiBase, playerName, retryCount])
 
   if (loading) return <LoadingSpinner text="Loading player history..." />
   if (error) return (
     <div className="error-container">
       <button onClick={() => window.history.back()} className="back-link">&larr; Back</button>
       <div className="error-message">{error}</div>
+      <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
   )
   if (!data) return null

@@ -1,23 +1,37 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
+import { fetchJson } from '../api'
 
 export default function WeekSelector({ apiBase }) {
   const [rounds, setRounds] = useState({})
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
   const navigate = useNavigate()
 
   useEffect(() => {
-    fetch(`${apiBase}/rounds`)
-      .then(r => r.json())
-      .then(data => { setRounds(data); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [apiBase])
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    fetchJson(`${apiBase}/rounds`)
+      .then(data => { if (!cancelled) { setRounds(data); setLoading(false) } })
+      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
+    return () => { cancelled = true }
+  }, [apiBase, retryCount])
 
   if (loading) return (
     <div className="week-selector">
       <h2>Select a Round</h2>
       <LoadingSpinner text="Loading rounds..." />
+    </div>
+  )
+
+  if (error) return (
+    <div className="week-selector">
+      <h2>Select a Round</h2>
+      <div className="error-message">{error}</div>
+      <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
   )
 

@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { fetchJson } from '../api'
 
 export default function SearchBar({ apiBase }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState(null)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [searchError, setSearchError] = useState(false)
   const wrapRef = useRef(null)
   const debounceRef = useRef(null)
   const navigate = useNavigate()
@@ -23,11 +25,11 @@ export default function SearchBar({ apiBase }) {
     if (!query || query.length < 2) { setResults(null); setOpen(false); return }
 
     setLoading(true)
+    setSearchError(false)
     debounceRef.current = setTimeout(() => {
-      fetch(`${apiBase}/search?q=${encodeURIComponent(query)}`)
-        .then(r => r.json())
+      fetchJson(`${apiBase}/search?q=${encodeURIComponent(query)}`)
         .then(data => { setResults(data); setOpen(true); setLoading(false) })
-        .catch(() => setLoading(false))
+        .catch(() => { setSearchError(true); setOpen(true); setLoading(false) })
     }, 300)
 
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
@@ -73,7 +75,10 @@ export default function SearchBar({ apiBase }) {
       {open && (
         <div className="search-dropdown">
           {loading && <div className="search-loading">Searching...</div>}
-          {!loading && !hasResults && query.length >= 2 && (
+          {!loading && searchError && (
+            <div className="search-empty">Search failed — try again</div>
+          )}
+          {!loading && !searchError && !hasResults && query.length >= 2 && (
             <div className="search-empty">No results found</div>
           )}
           {results?.teams?.length > 0 && (

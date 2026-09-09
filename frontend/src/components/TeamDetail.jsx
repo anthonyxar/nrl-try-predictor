@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
+import { fetchJson } from '../api'
 
 export default function TeamDetail({ apiBase }) {
   const [searchParams] = useSearchParams()
@@ -9,25 +10,26 @@ export default function TeamDetail({ apiBase }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [season, setSeason] = useState(2026)
+  const [retryCount, setRetryCount] = useState(0)
   const navigate = useNavigate()
 
   useEffect(() => {
     if (!teamName) { setError('No team name provided'); setLoading(false); return }
+    let cancelled = false
     setLoading(true)
-    fetch(`${apiBase}/team?name=${encodeURIComponent(teamName)}&season=${season}`)
-      .then(r => {
-        if (!r.ok) throw new Error('Could not load team data')
-        return r.json()
-      })
-      .then(d => { setData(d); setLoading(false) })
-      .catch(e => { setError(e.message); setLoading(false) })
-  }, [apiBase, teamName, season])
+    setError(null)
+    fetchJson(`${apiBase}/team?name=${encodeURIComponent(teamName)}&season=${season}`)
+      .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
+      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
+    return () => { cancelled = true }
+  }, [apiBase, teamName, season, retryCount])
 
   if (loading) return <LoadingSpinner text="Loading team data..." />
   if (error) return (
     <div className="error-container">
       <Link to="/" className="back-link">&larr; Back</Link>
       <div className="error-message">{error}</div>
+      <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
   )
   if (!data) return null
