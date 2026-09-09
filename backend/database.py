@@ -1396,7 +1396,7 @@ def get_team_scoring_breakdown(team_name: str, last_n_games: int = 10, before_se
 # ---- Prediction tracking ----
 
 
-def get_unrecorded_completed_matches(model_version: int = 2) -> list:
+def get_unrecorded_completed_matches(model_version: int = 3) -> list:
     """Get completed matches that don't have a prediction recorded yet for this model version."""
     conn = get_db()
     rows = conn.execute("""
