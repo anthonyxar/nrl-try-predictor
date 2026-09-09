@@ -451,8 +451,20 @@ async def proxy_image(url: str):
 
 @app.get("/api/rounds")
 async def get_rounds():
+    """List all rounds for the round-selector. Uses whatever name is
+    already cached for each round (populated by _refresh_round_cache from
+    NRL's own roundTitle — e.g. "Finals Week 1") so finals weeks show
+    NRL's real label instead of a generic "Round N", and self-corrects as
+    NRL publishes each week's draw. Falls back to "Round N" for anything
+    not yet warmed (e.g. right after a cold start)."""
+    with _round_cache_lock:
+        cached_names = {
+            i: _round_cache[i][0].get("name")
+            for i in range(1, TOTAL_ROUNDS + 1)
+            if i in _round_cache
+        }
     return {
-        str(i): {"name": f"Round {i}"}
+        str(i): {"name": cached_names.get(i) or f"Round {i}"}
         for i in range(1, TOTAL_ROUNDS + 1)
     }
 
