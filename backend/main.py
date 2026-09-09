@@ -663,6 +663,23 @@ _ROUND_CACHE_TTL_LIVE = 120      # 2 min for rounds with upcoming/live matches
 _ROUND_CACHE_TTL_COMPLETED = 1800  # 30 min for fully completed rounds
 
 
+def _is_undrawn_echo(fixtures, round_number):
+    """NRL's API doesn't error for a round beyond what's currently drawn —
+    it just echoes back the latest available round's fixtures (same
+    match_urls). Detect that by comparing against the previous round's
+    cached fixtures, so we don't show finals week 2/3/4 as if they were
+    real, distinct rounds before NRL has actually published their draw."""
+    if round_number <= 1:
+        return False
+    with _round_cache_lock:
+        prev = _round_cache.get(round_number - 1)
+    if not prev:
+        return False  # previous round not cached — can't tell, assume real
+    prev_urls = {m.get("match_url") for m in prev[0].get("matches", []) if m.get("match_url")}
+    new_urls = {f.get("match_url") for f in fixtures if f.get("match_url")}
+    return bool(new_urls) and new_urls == prev_urls
+
+
 async def _refresh_round_cache(round_number):
     """Fetch and compute a round response, store in cache."""
     cache_key = round_number
@@ -671,6 +688,27 @@ async def _refresh_round_cache(round_number):
         if raw is None:
             return None
         fixtures, byes, round_title = parse_fixtures(raw)
+        if _is_undrawn_echo(fixtures, round_number):
+            # Not a real round yet — NRL is just echoing the last drawn
+            # round. Cache an empty result (the frontend already shows
+            # "No match data available for this round yet" for that) rather
+            # than confusingly duplicating another round's matches, and
+            # skip the prediction work entirely since it'd be thrown away.
+            response = {
+                "round": round_number,
+                "name": f"Round {round_number}",
+                "matches": [],
+                "byes": [],
+                "draw_not_released": True,
+            }
+            refreshed_at = time.time()
+            with _round_cache_lock:
+                _round_cache[cache_key] = (response, refreshed_at)
+            # Deliberately not persisted to cache_store: this is a transient
+            # placeholder that should be re-derived (and likely replaced by
+            # real data) on every restart, not carried forward as if stale
+            # data were meaningful.
+            return response
         fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, round_number)
         response = {
             "round": round_number,
@@ -712,7 +750,10 @@ async def get_round(round_number: int, version: int = 3):
 
     if cached:
         resp, ts = cached
-        has_live = any(
+        # A not-yet-drawn round (empty matches) is exactly as pending as a
+        # live one — recheck it often so the real draw shows up promptly
+        # once NRL publishes it, rather than sitting on the 30-min TTL.
+        has_live = resp.get("draw_not_released") or any(
             (m.get("match_state") or "").lower() not in ("fulltime", "postmatch")
             for m in resp.get("matches", [])
         )
