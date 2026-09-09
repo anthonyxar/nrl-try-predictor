@@ -137,7 +137,7 @@ async def _warm_cache():
 
         for r in range(1, TOTAL_ROUNDS + 1):
             try:
-                result = await _refresh_round_cache(r, 3)
+                result = await _refresh_round_cache(r)
                 if result is None:
                     logger.info(f"Round {r} unavailable, stopping warmup.")
                     break
