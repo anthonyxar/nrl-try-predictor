@@ -7,6 +7,7 @@ Match endpoint: /draw/nrl-premiership/2026/round-N/team-v-team/data
 
 import time
 import httpx
+import json
 import logging
 from typing import Optional
 
@@ -37,14 +38,24 @@ async def fetch_round(round_number: int) -> Optional[dict]:
         return cached[0]
 
     url = f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={SEASON}&round={round_number}"
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
-        resp = await client.get(url)
-        if resp.status_code != 200:
-            logger.error(f"NRL round API returned {resp.status_code}")
-            return None
-        data = resp.json()
-        _nrl_api_cache[cache_key] = (data, now)
-        return data
+    try:
+        async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.error(f"NRL round API returned {resp.status_code}")
+                return None
+            data = resp.json()
+    except httpx.HTTPError as e:
+        logger.error(f"NRL round API request failed for round {round_number}: {e}")
+        return None
+    except (json.JSONDecodeError, ValueError) as e:
+        # NRL's API occasionally returns a 200 with a non-JSON body (empty,
+        # HTML error page, etc.) — treat it the same as a fetch failure
+        # rather than crashing the request.
+        logger.error(f"NRL round API returned invalid JSON for round {round_number}: {e}")
+        return None
+    _nrl_api_cache[cache_key] = (data, now)
+    return data
 
 
 async def fetch_match_detail(match_url_path: str) -> Optional[dict]:
@@ -55,12 +66,19 @@ async def fetch_match_detail(match_url_path: str) -> Optional[dict]:
     # Ensure trailing slash and append 'data'
     path = match_url_path.rstrip("/") + "/data"
     url = f"{BASE_URL}{path}"
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
-        resp = await client.get(url)
-        if resp.status_code != 200:
-            logger.error(f"NRL match API returned {resp.status_code} for {url}")
-            return None
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                logger.error(f"NRL match API returned {resp.status_code} for {url}")
+                return None
+            return resp.json()
+    except httpx.HTTPError as e:
+        logger.error(f"NRL match API request failed for {url}: {e}")
+        return None
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"NRL match API returned invalid JSON for {url}: {e}")
+        return None
 
 
 def parse_fixtures(raw_data: dict) -> list:
