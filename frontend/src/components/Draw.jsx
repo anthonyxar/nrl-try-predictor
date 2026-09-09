@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
+import { fetchJson } from '../api'
 
 const TEAM_COLOURS = {
   'broncos': '#6D2735',
@@ -26,43 +27,31 @@ export default function Draw({ apiBase }) {
   const { roundNumber } = useParams()
   const [roundData, setRoundData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [modelVersion, setModelVersion] = useState(3)
-  const [versionLoading, setVersionLoading] = useState(false)
-  const lastRoundRef = React.useRef(roundNumber)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
   const navigate = useNavigate()
 
-  // Full loading when round changes, inline version switch otherwise
   useEffect(() => {
-    const roundChanged = lastRoundRef.current !== roundNumber
-    lastRoundRef.current = roundNumber
-
-    if (roundChanged) {
-      setRoundData(null)
-      setLoading(true)
-      window.scrollTo(0, 0)
-    } else if (roundData !== null) {
-      setVersionLoading(true)
-    } else {
-      setLoading(true)
-    }
+    setRoundData(null)
+    setLoading(true)
+    setError(null)
+    window.scrollTo(0, 0)
 
     let cancelled = false
-    fetch(`${apiBase}/rounds/${roundNumber}?version=${modelVersion}`)
-      .then(r => r.json())
+    fetchJson(`${apiBase}/rounds/${roundNumber}`)
       .then(data => {
         if (cancelled) return
         setRoundData(data)
         setLoading(false)
-        setVersionLoading(false)
         // Prefetch adjacent rounds in background
         const rn = parseInt(roundNumber)
-        if (rn > 1) fetch(`${apiBase}/rounds/${rn - 1}?version=${modelVersion}`)
-        if (rn < 27) fetch(`${apiBase}/rounds/${rn + 1}?version=${modelVersion}`)
+        if (rn > 1) fetchJson(`${apiBase}/rounds/${rn - 1}`).catch(() => {})
+        if (rn < 27) fetchJson(`${apiBase}/rounds/${rn + 1}`).catch(() => {})
       })
-      .catch(() => { if (!cancelled) { setLoading(false); setVersionLoading(false) } })
+      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
 
     return () => { cancelled = true }
-  }, [apiBase, roundNumber, modelVersion])
+  }, [apiBase, roundNumber, retryCount])
 
   if (loading) return (
     <div className="draw">
@@ -71,6 +60,15 @@ export default function Draw({ apiBase }) {
         <h2 className="nav-bar-title">Round {roundNumber}</h2>
       </div>
       <LoadingSpinner text={`Loading Round ${roundNumber} predictions...`} />
+    </div>
+  )
+  if (error) return (
+    <div className="error-container">
+      <div className="nav-bar sticky">
+        <Link to="/" className="nav-btn">&larr; All Rounds</Link>
+      </div>
+      <div className="error-message">{error}</div>
+      <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
   )
   if (!roundData) return <div className="error">Round not found</div>
@@ -128,60 +126,6 @@ export default function Draw({ apiBase }) {
             )}
           </div>
         </div>
-      </div>
-
-      <div className="version-selector">
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelVersion === 1 ? 'active' : ''}`}
-            onClick={(e) => { e.stopPropagation(); setModelVersion(1) }} disabled={versionLoading}>
-            V1 <span className="version-desc">Baseline</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 1 — Baseline Model</strong>
-            <ul>
-              <li>Player try factor based on full career history</li>
-              <li>Team attack/defence from last 10 games only</li>
-              <li>Win prediction: equal-weighted factors (form 30%, H2H 25%, venue 25%, season 20%)</li>
-              <li>No edge vulnerability, weather, or venue-specific adjustments</li>
-            </ul>
-          </div>
-        </div>
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelVersion === 2 ? 'active' : ''}`}
-            onClick={(e) => { e.stopPropagation(); setModelVersion(2) }} disabled={versionLoading}>
-            V2 <span className="version-desc">Enhanced</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 2 — Enhanced Model</strong>
-            <ul>
-              <li>Player try factor blends 60% last 5 games / 40% career</li>
-              <li>Team attack/defence blends 60% last 5 / 40% last 10 games</li>
-              <li>Edge vulnerability: adjusts probability based on opponent's defensive weaknesses</li>
-              <li>Venue-specific home advantage based on team's record at that ground</li>
-              <li>Weather &amp; ground conditions impact</li>
-            </ul>
-          </div>
-        </div>
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelVersion === 3 ? 'active' : ''}`}
-            onClick={(e) => { e.stopPropagation(); setModelVersion(3) }} disabled={versionLoading}>
-            V3 <span className="version-desc">Full Model</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 3 — Full Model</strong>
-            <ul>
-              <li>All V2 features plus:</li>
-              <li>Margin-of-victory weighted form (quality of wins/losses matters)</li>
-              <li>Rest days &amp; short turnaround penalties</li>
-              <li>Bye-week freshness boost</li>
-              <li>Opponent-quality adjusted try rates</li>
-              <li>Interchange timing (actual bench minutes from data)</li>
-              <li>Season progression (early-round discount)</li>
-              <li>Probability calibration from historical accuracy</li>
-            </ul>
-          </div>
-        </div>
-        {versionLoading && <span className="version-loading">Updating...</span>}
       </div>
 
       {roundData.byes && roundData.byes.length > 0 && (

@@ -1,22 +1,32 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
+import { fetchJson } from '../api'
 
 export default function AccuracyDashboard({ apiBase }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [modelFilter, setModelFilter] = useState(null)
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
+    let cancelled = false
     setLoading(true)
-    const params = modelFilter ? `?model_version=${modelFilter}` : ''
-    fetch(`${apiBase}/accuracy${params}`)
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false) })
-      .catch(() => setLoading(false))
-  }, [apiBase, modelFilter])
+    setError(null)
+    fetchJson(`${apiBase}/accuracy`)
+      .then(d => { if (!cancelled) { setData(d); setLoading(false) } })
+      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
+    return () => { cancelled = true }
+  }, [apiBase, retryCount])
 
   if (loading) return <LoadingSpinner text="Loading accuracy data..." />
+  if (error) return (
+    <div className="error-container">
+      <Link to="/" className="back-link">&larr; Back</Link>
+      <div className="error-message">{error}</div>
+      <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
+    </div>
+  )
   if (!data) return <div className="error-message">No accuracy data available yet. View some completed matches to start tracking.</div>
 
   const win = data.win_prediction
@@ -30,54 +40,6 @@ export default function AccuracyDashboard({ apiBase }) {
       <div className="accuracy-header">
         <Link to="/" className="back-link">&larr; All Rounds</Link>
         <h2>Prediction Accuracy</h2>
-      </div>
-
-      <div className="version-selector">
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelFilter === null ? 'active' : ''}`}
-            onClick={() => setModelFilter(null)}>
-            All <span className="version-desc">Combined</span>
-          </button>
-        </div>
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelFilter === 1 ? 'active' : ''}`}
-            onClick={() => setModelFilter(1)}>
-            V1 <span className="version-desc">Baseline</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 1 — Baseline Model</strong>
-            <ul>
-              <li>Player try factor based on full career history</li>
-              <li>Team attack/defence from last 10 games only</li>
-              <li>Win prediction: equal-weighted factors (form 30%, H2H 25%, venue 25%, season 20%)</li>
-              <li>No edge vulnerability, weather, or venue-specific adjustments</li>
-            </ul>
-          </div>
-        </div>
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelFilter === 2 ? 'active' : ''}`}
-            onClick={() => setModelFilter(2)}>
-            V2 <span className="version-desc">Enhanced</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 2 — Enhanced Model</strong>
-            <ul>
-              <li>Recency-weighted form, edge vulnerability, venue-specific home advantage, weather impact</li>
-            </ul>
-          </div>
-        </div>
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelFilter === 3 ? 'active' : ''}`}
-            onClick={() => setModelFilter(3)}>
-            V3 <span className="version-desc">Full Model</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 3 — Full Model</strong>
-            <ul>
-              <li>Margin-weighted form, rest days, bye-week boost, opponent-quality tries, interchange timing, calibration</li>
-            </ul>
-          </div>
-        </div>
       </div>
 
       {noData ? (
@@ -113,31 +75,6 @@ export default function AccuracyDashboard({ apiBase }) {
               </div>
             </div>
           </div>
-
-          {/* Model comparison */}
-          {modelFilter === null && data.by_model && data.by_model.length > 1 && (
-            <div className="accuracy-section">
-              <h3 className="section-title">Model Comparison</h3>
-              <div className="model-comparison-table">
-                <div className="mc-row mc-heading">
-                  <span className="mc-model">Model</span>
-                  <span className="mc-val">Matches</span>
-                  <span className="mc-val">Win %</span>
-                  <span className="mc-val">Try Hits</span>
-                  <span className="mc-val">Multi Hits</span>
-                </div>
-                {data.by_model.map(m => (
-                  <div key={m.model_version} className="mc-row">
-                    <span className="mc-model">V{m.model_version}</span>
-                    <span className="mc-val">{m.total}</span>
-                    <span className="mc-val">{m.total > 0 ? ((m.win_correct / m.total) * 100).toFixed(1) : 0}%</span>
-                    <span className="mc-val">{m.try_hits || 0}</span>
-                    <span className="mc-val">{m.multi_all_hit || 0}/{m.total}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* By round */}
           {data.by_round && data.by_round.length > 0 && (

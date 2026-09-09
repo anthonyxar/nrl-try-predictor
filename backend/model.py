@@ -1,16 +1,14 @@
 """
 NRL Prediction Model - powered by historical data (2020-2026).
 
-V1: Position base rates, player career try factor, team attack/defence, flat home advantage.
-V2: Recency-weighted form (last-5 vs last-10 blending), edge vulnerability,
-    venue-specific home advantage, weather/ground conditions.
-V3: All V2 factors plus:
+Factors used for try and win probability:
+    - Position base rates, career + recency-weighted (last-5/last-10) player try factor
+    - Team attack/defence form, edge vulnerability (position-specific sensitivity)
+    - Venue-specific home advantage, weather/ground conditions
     - Margin-of-victory weighted form (big wins count more than scrappy wins)
-    - Rest days / short turnaround penalty (5-day turnarounds penalised)
-    - Bye-week boost (teams coming off a bye are fresher)
+    - Rest days / short turnaround penalty, bye-week freshness boost
     - Season progression weighting (early-season results discounted)
     - Opponent-quality adjusted try rates (tries vs strong defences worth more)
-    - Try minute distribution (first-half vs second-half scorer profiles)
     - Interchange timing (bench minutes based on actual interchange data)
     - Probability calibration from historical prediction accuracy
 """
@@ -31,7 +29,6 @@ from database import (
     get_players_recent_form_batch,
     get_venue_stats,
     clear_query_cache,
-    # V3 imports
     get_team_margin_weighted_form,
     get_team_rest_days,
     get_team_had_bye,
@@ -78,7 +75,7 @@ JERSEY_FIELD_SIDE = {
     13: "middle",   # Lock
 }
 
-# Position-specific sensitivity to edge vulnerability (V3+).
+# Position-specific sensitivity to edge vulnerability.
 # Weights derived from 2026 rounds 1-8 try distribution per edge:
 #   Left edge:  Winger 31%, Five-Eighth 23%, Centre 23%, 2nd Row 22%
 #   Right edge: Winger 43%, Centre 27%, 2nd Row 15%, Halfback 11%
@@ -170,76 +167,37 @@ def _match_position(position_name: str, rates: dict) -> float:
     return FALLBACK_POSITION_RATES.get("Interchange", 0.05)
 
 
-def _get_player_try_factor(player_name: str, position: str, model_version: int = 2,
-                            before_season=None, before_round=None) -> float:
+def _get_player_try_factor_from_history(history: list, position: str) -> float:
     """
-    Calculate a player-specific try factor from their historical data.
-    V2: Blends career rate (40%) with recent 5-game form (60%).
-    V1: Uses career rate only.
+    Calculate a player-specific try factor from pre-fetched historical data.
+    Blends recent 5-game form (60%) with career rate (40%).
     Returns a multiplier (1.0 = average for position).
     """
-    history = get_player_try_history(player_name, before_season, before_round)
     if not history or len(history) < 3:
         return 1.0  # Not enough data, assume average
 
-    # Get expected rate for their position
     rates = _get_position_rates()
     expected_rate = _match_position(position, rates)
     if expected_rate <= 0:
         return 1.0
 
-    # Career rate
     total_games = len(history)
     total_tries = sum(h["tries_scored"] for h in history)
     career_rate = total_tries / total_games if total_games > 0 else 0
 
-    if model_version >= 2:
-        # Recent form (last 5 games) — history is ordered oldest-first
-        recent = history[-5:]
-        recent_games = len(recent)
-        recent_tries = sum(h["tries_scored"] for h in recent)
-        recent_rate = recent_tries / recent_games if recent_games > 0 else 0
+    # Recent form (last 5 games) — history is ordered oldest-first
+    recent = history[-5:]
+    recent_games = len(recent)
+    recent_tries = sum(h["tries_scored"] for h in recent)
+    recent_rate = recent_tries / recent_games if recent_games > 0 else 0
 
-        # Blend: 60% recent, 40% career (if enough recent games)
-        if recent_games >= 3:
-            blended_rate = recent_rate * 0.6 + career_rate * 0.4
-        else:
-            blended_rate = career_rate
+    if recent_games >= 3:
+        blended_rate = recent_rate * 0.6 + career_rate * 0.4
     else:
         blended_rate = career_rate
 
     factor = blended_rate / expected_rate
     # Clamp between 0.4 and 2.5 to avoid extreme outliers
-    return max(0.4, min(factor, 2.5))
-
-
-def _get_player_try_factor_from_history(history: list, position: str, model_version: int = 2) -> float:
-    """Same as _get_player_try_factor but uses pre-fetched history to avoid DB calls."""
-    if not history or len(history) < 3:
-        return 1.0
-
-    rates = _get_position_rates()
-    expected_rate = _match_position(position, rates)
-    if expected_rate <= 0:
-        return 1.0
-
-    total_games = len(history)
-    total_tries = sum(h["tries_scored"] for h in history)
-    career_rate = total_tries / total_games if total_games > 0 else 0
-
-    if model_version >= 2:
-        recent = history[-5:]
-        recent_games = len(recent)
-        recent_tries = sum(h["tries_scored"] for h in recent)
-        recent_rate = recent_tries / recent_games if recent_games > 0 else 0
-        if recent_games >= 3:
-            blended_rate = recent_rate * 0.6 + career_rate * 0.4
-        else:
-            blended_rate = career_rate
-    else:
-        blended_rate = career_rate
-
-    factor = blended_rate / expected_rate
     return max(0.4, min(factor, 2.5))
 
 
@@ -252,14 +210,15 @@ def _predict_try_with_history(
     team_attack: dict,
     opp_defence: dict,
     opp_edge_vulnerability: dict = None,
-    model_version: int = 2,
     weather: str = "",
     ground_conditions: str = "",
     v3_context: dict = None,
 ) -> float:
     """Predict try probability using pre-fetched player history.
     v3_context (optional): dict with keys bench_minutes, try_minutes, calibration,
-    rest_days, bye_week, round_number, quality_adj_rate for V3 enhancements."""
+    rest_days, bye_week, round_number, quality_adj_rate — populated whenever the
+    caller knows the match's season/round; situational adjustments below are
+    skipped gracefully when it's unavailable."""
     position = player.get("position", "Interchange")
     is_bench = player.get("is_interchange", False) or player.get("number", 0) >= 14
     jersey = player.get("number", 0)
@@ -268,10 +227,10 @@ def _predict_try_with_history(
     rates = _get_position_rates()
     base_rate = _match_position(position, rates)
 
-    player_factor = _get_player_try_factor_from_history(history, position, model_version)
+    player_factor = _get_player_try_factor_from_history(history, position)
 
-    # V3: Blend in opponent-quality adjusted try rate
-    if model_version >= 3 and v3_context:
+    # Blend in opponent-quality adjusted try rate
+    if v3_context:
         qa_rate = v3_context.get("quality_adj_rates", {}).get(name, -1.0)
         if qa_rate >= 0:
             expected_rate = _match_position(position, rates)
@@ -283,39 +242,28 @@ def _predict_try_with_history(
 
     rate = base_rate * player_factor
 
-    if model_version >= 2:
-        team_avg_scored_10 = team_attack.get("avg_scored", LEAGUE_AVG_PPG)
-        team_avg_scored_5 = team_attack.get("avg_scored_recent", team_avg_scored_10)
-        team_avg_scored = team_avg_scored_5 * 0.6 + team_avg_scored_10 * 0.4
-    else:
-        team_avg_scored = team_attack.get("avg_scored", LEAGUE_AVG_PPG)
+    team_avg_scored_10 = team_attack.get("avg_scored", LEAGUE_AVG_PPG)
+    team_avg_scored_5 = team_attack.get("avg_scored_recent", team_avg_scored_10)
+    team_avg_scored = team_avg_scored_5 * 0.6 + team_avg_scored_10 * 0.4
     attack_factor = team_avg_scored / LEAGUE_AVG_PPG
     attack_factor = max(0.6, min(attack_factor, 1.8))
     rate *= attack_factor
 
-    if model_version >= 2:
-        opp_avg_conceded_10 = opp_defence.get("avg_conceded", LEAGUE_AVG_PPG)
-        opp_avg_conceded_5 = opp_defence.get("avg_conceded_recent", opp_avg_conceded_10)
-        opp_avg_conceded = opp_avg_conceded_5 * 0.6 + opp_avg_conceded_10 * 0.4
-    else:
-        opp_avg_conceded = opp_defence.get("avg_conceded", LEAGUE_AVG_PPG)
+    opp_avg_conceded_10 = opp_defence.get("avg_conceded", LEAGUE_AVG_PPG)
+    opp_avg_conceded_5 = opp_defence.get("avg_conceded_recent", opp_avg_conceded_10)
+    opp_avg_conceded = opp_avg_conceded_5 * 0.6 + opp_avg_conceded_10 * 0.4
     defence_factor = opp_avg_conceded / LEAGUE_AVG_PPG
     defence_factor = max(0.6, min(defence_factor, 1.8))
     rate *= defence_factor
 
-    # Edge vulnerability — V2+
-    if model_version >= 2 and opp_edge_vulnerability and 1 <= jersey <= 13:
+    # Edge vulnerability — position-specific sensitivity so wingers get the
+    # full factor, halves/centres/2nd rowers get proportionally less
+    if opp_edge_vulnerability and 1 <= jersey <= 13:
         player_edge = JERSEY_FIELD_SIDE.get(jersey, "middle")
         edge_info = opp_edge_vulnerability.get(player_edge, {})
         edge_vuln = edge_info.get("vulnerability", 1.0)
         if edge_vuln != 1.0:
-            if model_version >= 3:
-                # V3: position-specific sensitivity — wingers get full factor,
-                # halves/centres/2nd rowers get proportionally less
-                edge_weight = POSITION_EDGE_SENSITIVITY.get(position, _DEFAULT_EDGE_SENSITIVITY)
-            else:
-                # V2: flat 0.3 weight for all positions (legacy)
-                edge_weight = 0.3
+            edge_weight = POSITION_EDGE_SENSITIVITY.get(position, _DEFAULT_EDGE_SENSITIVITY)
             edge_factor = 1.0 + (edge_vuln - 1.0) * edge_weight
             edge_factor = max(0.85, min(edge_factor, 1.20))
             rate *= edge_factor
@@ -324,13 +272,12 @@ def _predict_try_with_history(
     if is_home:
         rate *= HOME_ADVANTAGE_TRY
 
-    # Weather — V2+
-    if model_version >= 2:
-        weather_factor = _get_weather_factor(weather, ground_conditions, position)
-        rate *= weather_factor
+    # Weather
+    weather_factor = _get_weather_factor(weather, ground_conditions, position)
+    rate *= weather_factor
 
-    # --- V3 enhancements ---
-    if model_version >= 3 and v3_context:
+    # --- Situational adjustments (need before_season/before_round context) ---
+    if v3_context:
         # Rest days: short turnaround penalty
         rest = v3_context.get("rest_days", -1)
         if rest >= 0:
@@ -360,8 +307,8 @@ def _predict_try_with_history(
 
     # Bench minute reduction
     if is_bench and position in ("Interchange", "", "Reserve"):
-        if model_version >= 3 and v3_context:
-            # V3: Use actual interchange timing data
+        if v3_context:
+            # Use actual interchange timing data
             bench_mins = v3_context.get("bench_minutes", {}).get(name, 30.0)
             # Scale by proportion of game played (80 mins = full game)
             minute_fraction = bench_mins / 80.0
@@ -375,8 +322,8 @@ def _predict_try_with_history(
     noise = rng.normal(1.0, 0.04)
     rate *= max(noise, 0.6)
 
-    # V3: Calibration correction
-    if model_version >= 3 and v3_context:
+    # Calibration correction
+    if v3_context:
         calibration = v3_context.get("calibration", {})
         if calibration:
             bucket = min(int(rate * 10), 5)
@@ -394,7 +341,6 @@ def predict_win_probability(
     away_team: str,
     home_stats: dict,
     away_stats: dict,
-    model_version: int = 2,
     before_season=None,
     before_round=None,
     venue: str = "",
@@ -404,12 +350,11 @@ def predict_win_probability(
     """
     Predict win probability for each team.
 
-    V2 factors (recency-weighted — last 5 games carry more weight):
-    1. Last 5 games form (30%) 2. Last 10 games form (20%)
-    3. Points diff last 5 (15%) 4. H2H (10%) 5. Venue (15%) 6. Season (10%)
-
-    V1 factors (equal-weighted, last-10 only):
-    1. Last 10 form (30%) 2. H2H (25%) 3. Venue (25%) 4. Season (20%)
+    Factors (recency-weighted — last 5 games carry more weight):
+    1. Last 5 games form (20%) 2. Last 10 games form (10%)
+    3. Points diff last 5 (15%) 4. Margin-weighted quality score (20%)
+    5. H2H (10%) 6. Venue (15%) 7. Season (10%)
+    Plus rest days, bye-week, and early-season adjustments layered on top.
     """
     # Recent form from DB
     home_form = get_team_attack_defence(home_team, last_n_games=10,
@@ -444,97 +389,77 @@ def predict_win_probability(
     home_season_wr = home_stats.get("wins", 0) / home_stats.get("played", 1) if home_stats.get("played", 0) > 0 else 0.5
     away_season_wr = away_stats.get("wins", 0) / away_stats.get("played", 1) if away_stats.get("played", 0) > 0 else 0.5
 
-    if model_version >= 3:
-        # V3: margin-weighted quality + all V2 factors + new situational factors
-        recent_n = min(5, home_form["played"])
-        home_recent5_wr = home_form["wins_recent"] / recent_n if recent_n > 0 else 0.5
-        recent_n = min(5, away_form["played"])
-        away_recent5_wr = away_form["wins_recent"] / recent_n if recent_n > 0 else 0.5
+    recent_n = min(5, home_form["played"])
+    home_recent5_wr = home_form["wins_recent"] / recent_n if recent_n > 0 else 0.5
+    recent_n = min(5, away_form["played"])
+    away_recent5_wr = away_form["wins_recent"] / recent_n if recent_n > 0 else 0.5
 
-        home_ppg_diff = (home_form["avg_scored_recent"] - home_form["avg_conceded_recent"]) / LEAGUE_AVG_PPG
-        away_ppg_diff = (away_form["avg_scored_recent"] - away_form["avg_conceded_recent"]) / LEAGUE_AVG_PPG
-        home_diff_factor = max(0.1, min(0.5 + home_ppg_diff * 0.15, 0.9))
-        away_diff_factor = max(0.1, min(0.5 + away_ppg_diff * 0.15, 0.9))
+    home_ppg_diff = (home_form["avg_scored_recent"] - home_form["avg_conceded_recent"]) / LEAGUE_AVG_PPG
+    away_ppg_diff = (away_form["avg_scored_recent"] - away_form["avg_conceded_recent"]) / LEAGUE_AVG_PPG
+    home_diff_factor = max(0.1, min(0.5 + home_ppg_diff * 0.15, 0.9))
+    away_diff_factor = max(0.1, min(0.5 + away_ppg_diff * 0.15, 0.9))
 
-        # Margin-weighted quality score (sigmoid of win margins)
-        home_mwf = get_team_margin_weighted_form(home_team, last_n_games=10,
-                                                  before_season=before_season, before_round=before_round)
-        away_mwf = get_team_margin_weighted_form(away_team, last_n_games=10,
-                                                  before_season=before_season, before_round=before_round)
+    # Margin-weighted quality score (sigmoid of win margins)
+    home_mwf = get_team_margin_weighted_form(home_team, last_n_games=10,
+                                              before_season=before_season, before_round=before_round)
+    away_mwf = get_team_margin_weighted_form(away_team, last_n_games=10,
+                                              before_season=before_season, before_round=before_round)
 
-        home_raw = (
-            home_recent5_wr * 0.20 +
-            home_recent10_wr * 0.10 +
-            home_diff_factor * 0.15 +
-            home_mwf["quality_score"] * 0.20 +  # V3: margin-weighted quality
-            home_h2h * 0.10 +
-            home_venue_factor * 0.15 +
-            home_season_wr * 0.10
-        )
-        away_raw = (
-            away_recent5_wr * 0.20 +
-            away_recent10_wr * 0.10 +
-            away_diff_factor * 0.15 +
-            away_mwf["quality_score"] * 0.20 +
-            away_h2h * 0.10 +
-            away_venue_factor * 0.15 +
-            away_season_wr * 0.10
-        )
+    home_raw = (
+        home_recent5_wr * 0.20 +
+        home_recent10_wr * 0.10 +
+        home_diff_factor * 0.15 +
+        home_mwf["quality_score"] * 0.20 +
+        home_h2h * 0.10 +
+        home_venue_factor * 0.15 +
+        home_season_wr * 0.10
+    )
+    away_raw = (
+        away_recent5_wr * 0.20 +
+        away_recent10_wr * 0.10 +
+        away_diff_factor * 0.15 +
+        away_mwf["quality_score"] * 0.20 +
+        away_h2h * 0.10 +
+        away_venue_factor * 0.15 +
+        away_season_wr * 0.10
+    )
 
-        # V3: Rest days adjustment
-        if before_season and before_round:
-            home_rest = get_team_rest_days(home_team, before_season, before_round)
-            away_rest = get_team_rest_days(away_team, before_season, before_round)
-            if home_rest >= 0 and away_rest >= 0:
-                rest_diff = home_rest - away_rest
-                # +1 day rest advantage ≈ +1% win probability
-                home_raw += rest_diff * 0.01
-            elif home_rest >= 0:
-                if home_rest <= 5:
-                    home_raw -= 0.03
-            elif away_rest >= 0:
-                if away_rest <= 5:
-                    away_raw -= 0.03
+    # Rest days adjustment
+    if before_season and before_round:
+        home_rest = get_team_rest_days(home_team, before_season, before_round)
+        away_rest = get_team_rest_days(away_team, before_season, before_round)
+        if home_rest >= 0 and away_rest >= 0:
+            rest_diff = home_rest - away_rest
+            # +1 day rest advantage ≈ +1% win probability
+            home_raw += rest_diff * 0.01
+        elif home_rest >= 0:
+            if home_rest <= 5:
+                home_raw -= 0.03
+        elif away_rest >= 0:
+            if away_rest <= 5:
+                away_raw -= 0.03
 
-            # V3: Bye-week boost
-            home_bye = get_team_had_bye(home_team, before_season, before_round)
-            away_bye = get_team_had_bye(away_team, before_season, before_round)
-            if home_bye:
-                home_raw += 0.04
-            if away_bye:
-                away_raw += 0.04
+        # Bye-week boost
+        home_bye = get_team_had_bye(home_team, before_season, before_round)
+        away_bye = get_team_had_bye(away_team, before_season, before_round)
+        if home_bye:
+            home_raw += 0.04
+        if away_bye:
+            away_raw += 0.04
 
-            # V3: Season progression — discount early-round H2H and season stats
-            if before_round <= 4:
-                # Early season: reduce weight of season WR (unreliable small sample)
-                home_raw -= home_season_wr * 0.05
-                away_raw -= away_season_wr * 0.05
-                home_raw += 0.5 * 0.05  # Replace with neutral
-                away_raw += 0.5 * 0.05
+        # Season progression — discount early-round H2H and season stats
+        if before_round <= 4:
+            # Early season: reduce weight of season WR (unreliable small sample)
+            home_raw -= home_season_wr * 0.05
+            away_raw -= away_season_wr * 0.05
+            home_raw += 0.5 * 0.05  # Replace with neutral
+            away_raw += 0.5 * 0.05
 
-        display_home_form = round(home_recent5_wr, 3)
-        display_away_form = round(away_recent5_wr, 3)
+    display_home_form = round(home_recent5_wr, 3)
+    display_away_form = round(away_recent5_wr, 3)
 
-    elif model_version >= 2:
-        # V1: equal-weighted, last-10 only
-        home_raw = (
-            home_recent10_wr * 0.30 +
-            home_h2h * 0.25 +
-            home_venue_factor * 0.25 +
-            home_season_wr * 0.20
-        )
-        away_raw = (
-            away_recent10_wr * 0.30 +
-            away_h2h * 0.25 +
-            away_venue_factor * 0.25 +
-            away_season_wr * 0.20
-        )
-        display_home_form = round(home_recent10_wr, 3)
-        display_away_form = round(away_recent10_wr, 3)
-
-    # Home advantage boost
-    if model_version >= 2 and venue:
-        # V2: Venue-specific home advantage
+    # Home advantage boost — venue-specific where we have enough data
+    if venue:
         venue_data = get_venue_stats(venue, home_team)
         if venue_data.get("team_games", 0) >= 5:
             venue_wr = venue_data["team_win_rate"]
@@ -543,7 +468,6 @@ def predict_win_probability(
         else:
             home_raw += HOME_ADVANTAGE_WIN
     else:
-        # V1: Flat home advantage
         home_raw += HOME_ADVANTAGE_WIN
 
     # Normalise to probabilities
@@ -560,16 +484,10 @@ def predict_win_probability(
     away_prob = 1 - home_prob
 
     # --- Predicted score ---
-    if model_version >= 2:
-        home_attack_ppg = home_form["avg_scored_recent"] * 0.6 + home_form["avg_scored"] * 0.4
-        away_attack_ppg = away_form["avg_scored_recent"] * 0.6 + away_form["avg_scored"] * 0.4
-        home_defence_ppg = home_form["avg_conceded_recent"] * 0.6 + home_form["avg_conceded"] * 0.4
-        away_defence_ppg = away_form["avg_conceded_recent"] * 0.6 + away_form["avg_conceded"] * 0.4
-    else:
-        home_attack_ppg = home_form["avg_scored"]
-        away_attack_ppg = away_form["avg_scored"]
-        home_defence_ppg = home_form["avg_conceded"]
-        away_defence_ppg = away_form["avg_conceded"]
+    home_attack_ppg = home_form["avg_scored_recent"] * 0.6 + home_form["avg_scored"] * 0.4
+    away_attack_ppg = away_form["avg_scored_recent"] * 0.6 + away_form["avg_scored"] * 0.4
+    home_defence_ppg = home_form["avg_conceded_recent"] * 0.6 + home_form["avg_conceded"] * 0.4
+    away_defence_ppg = away_form["avg_conceded_recent"] * 0.6 + away_form["avg_conceded"] * 0.4
 
     home_pred_score = (home_attack_ppg * 0.5 + away_defence_ppg * 0.5) * 1.03
     away_pred_score = (away_attack_ppg * 0.5 + home_defence_ppg * 0.5) * 0.97
@@ -577,12 +495,12 @@ def predict_win_probability(
     home_pred_score = max(4, round(home_pred_score / 2) * 2)
     away_pred_score = max(4, round(away_pred_score / 2) * 2)
 
-    # Weather impact on scoring — V2 only
+    # Weather impact on scoring
     w_lower = (weather or "").lower()
     g_lower = (ground_conditions or "").lower()
     is_wet = any(kw in w_lower for kw in _WET_KEYWORDS)
     is_heavy = any(kw in g_lower for kw in _HEAVY_GROUND)
-    if model_version >= 2 and (is_wet or is_heavy):
+    if is_wet or is_heavy:
         score_reduction = 0.88 if (is_wet and is_heavy) else 0.93
         home_pred_score = max(4, round(home_pred_score * score_reduction / 2) * 2)
         away_pred_score = max(4, round(away_pred_score * score_reduction / 2) * 2)
@@ -619,7 +537,6 @@ def generate_predictions(
     away_stats: dict,
     home_team_name: str = "",
     away_team_name: str = "",
-    model_version: int = 2,
     before_season=None,
     before_round=None,
     weather: str = "",
@@ -639,23 +556,20 @@ def generate_predictions(
         away_attack["avg_scored"] = away_stats.get("avg_points_scored", LEAGUE_AVG_PPG)
         away_attack["avg_conceded"] = away_stats.get("avg_points_conceded", LEAGUE_AVG_PPG)
 
-    if model_version >= 2:
-        away_edge_vuln = get_team_tries_conceded_by_edge(away_team_name, last_n_games=15,
-                                                          before_season=before_season, before_round=before_round)
-        home_edge_vuln = get_team_tries_conceded_by_edge(home_team_name, last_n_games=15,
-                                                          before_season=before_season, before_round=before_round)
-    else:
-        away_edge_vuln = None
-        home_edge_vuln = None
+    away_edge_vuln = get_team_tries_conceded_by_edge(away_team_name, last_n_games=15,
+                                                      before_season=before_season, before_round=before_round)
+    home_edge_vuln = get_team_tries_conceded_by_edge(home_team_name, last_n_games=15,
+                                                      before_season=before_season, before_round=before_round)
 
     # Batch-fetch all player histories in ONE query instead of 34+ individual queries
     all_player_names = [p["name"] for p in home_players + away_players if p.get("name")]
     _histories = get_players_try_histories_batch(all_player_names, before_season, before_round)
 
-    # V3: Build context with all new factors
+    # Build situational context (rest days, bye week, calibration, etc.) when
+    # we know the match's season/round — skipped gracefully otherwise.
     v3_home_ctx = None
     v3_away_ctx = None
-    if model_version >= 3 and before_season and before_round:
+    if before_season and before_round:
         calibration = get_calibration_data()
         # Bench minutes for interchange players
         bench_names = [p["name"] for p in home_players + away_players
@@ -692,7 +606,6 @@ def generate_predictions(
             prob = _predict_try_with_history(
                 p, _histories.get(p["name"], []),
                 team_name, opp_name, is_home, team_atk, opp_atk, opp_edge,
-                model_version=model_version,
                 weather=weather, ground_conditions=ground_conditions,
                 v3_context=v3_ctx,
             )
@@ -935,11 +848,10 @@ def find_value_picks(predictions: list, opp_team_name: str, team_nickname: str,
     return value_picks[:3]
 
 
-def generate_team_summary(team_name: str, model_version: int = 2,
-                          before_season=None, before_round=None) -> dict:
+def generate_team_summary(team_name: str, before_season=None, before_round=None) -> dict:
     """
     Generate a short attack/defence summary with strengths and weaknesses.
-    Uses last-10 for V1, blended last-5/last-10 for V2.
+    Uses a blended last-5/last-10 window.
     """
     form = get_team_attack_defence(team_name, last_n_games=10,
                                     before_season=before_season, before_round=before_round)
@@ -950,18 +862,11 @@ def generate_team_summary(team_name: str, model_version: int = 2,
     if form["played"] == 0:
         return {"attack": [], "defence": [], "attack_rating": "unknown", "defence_rating": "unknown"}
 
-    # Choose stats based on model version
-    if model_version >= 2:
-        recent_n = min(5, form["played"])
-        win_rate = form["wins_recent"] / recent_n if recent_n > 0 else 0.5
-        avg_scored = form["avg_scored_recent"] * 0.6 + form["avg_scored"] * 0.4
-        avg_conceded = form["avg_conceded_recent"] * 0.6 + form["avg_conceded"] * 0.4
-        form_label = "last 5"
-    else:
-        win_rate = form["wins"] / form["played"] if form["played"] > 0 else 0.5
-        avg_scored = form["avg_scored"]
-        avg_conceded = form["avg_conceded"]
-        form_label = "last 10"
+    recent_n = min(5, form["played"])
+    win_rate = form["wins_recent"] / recent_n if recent_n > 0 else 0.5
+    avg_scored = form["avg_scored_recent"] * 0.6 + form["avg_scored"] * 0.4
+    avg_conceded = form["avg_conceded_recent"] * 0.6 + form["avg_conceded"] * 0.4
+    form_label = "last 5"
 
     attack_points = []
     defence_points = []
@@ -1002,8 +907,8 @@ def generate_team_summary(team_name: str, model_version: int = 2,
     else:
         defence_points.append({"type": "weak", "text": f"Conceding {avg_conceded:.0f} pts/game ({form_label}) — very poor defence"})
 
-    # Edge vulnerability (V2 only)
-    if model_version >= 2 and edge_vuln:
+    # Edge vulnerability
+    if edge_vuln:
         weak_edges = []
         strong_edges = []
         for edge, info in edge_vuln.items():
@@ -1019,8 +924,8 @@ def generate_team_summary(team_name: str, model_version: int = 2,
         for label, v, rpg in sorted(strong_edges, key=lambda x: x[1]):
             defence_points.append({"type": "strong", "text": f"Strong on {label} — {rpg:.1f} tries/game conceded ({v:.1f}x avg)"})
 
-    # V3: Margin-weighted quality and situational factors
-    if model_version >= 3 and before_season and before_round:
+    # Margin-weighted quality and situational factors
+    if before_season and before_round:
         mwf = get_team_margin_weighted_form(team_name, last_n_games=10,
                                              before_season=before_season, before_round=before_round)
         if mwf["blowout_wins"] >= 2:

@@ -86,8 +86,8 @@ async def lifespan(app: FastAPI):
     warmup_task.cancel()
 
 
-def _cache_key_str(round_number: int, model_version: int) -> str:
-    return f"round:{round_number}:v{model_version}"
+def _cache_key_str(round_number: int) -> str:
+    return f"round:{round_number}"
 
 
 def _restore_cache_from_db():
@@ -107,14 +107,13 @@ def _restore_cache_from_db():
         if not key.startswith("round:"):
             continue
         try:
-            _, rnd_str, ver_str = key.split(":")
+            _, rnd_str = key.split(":")
             rnd = int(rnd_str)
-            ver = int(ver_str.lstrip("v"))
             payload = json.loads(entry["payload"])
         except Exception:
             continue
         with _round_cache_lock:
-            _round_cache[(rnd, ver)] = (payload, entry["refreshed_at"])
+            _round_cache[rnd] = (payload, entry["refreshed_at"])
         loaded += 1
     logger.info(f"Restored {loaded} cache entries from DB.")
 
@@ -188,7 +187,6 @@ async def _record_prediction_for_match(match_url: str, model_version: int = 3):
         home_players, away_players,
         stats.get("home", {}), stats.get("away", {}),
         home_team_name=home_nickname, away_team_name=away_nickname,
-        model_version=model_version,
         before_season=before_season, before_round=before_round,
         weather=match_weather, ground_conditions=match_ground,
     )
@@ -196,7 +194,6 @@ async def _record_prediction_for_match(match_url: str, model_version: int = 3):
     win_prediction = predict_win_probability(
         home_nickname, away_nickname,
         stats.get("home", {}), stats.get("away", {}),
-        model_version=model_version,
         before_season=before_season, before_round=before_round,
         venue=match_venue, weather=match_weather, ground_conditions=match_ground,
     )
@@ -267,21 +264,20 @@ async def _record_prediction_for_match(match_url: str, model_version: int = 3):
 
 async def _backfill_predictions():
     """Record predictions for all completed matches that haven't been recorded yet."""
-    for mv in (1, 2, 3):
-        unrecorded = get_unrecorded_completed_matches(model_version=mv)
-        if not unrecorded:
-            continue
-        logger.info(f"Backfilling {len(unrecorded)} prediction(s) for V{mv}...")
-        recorded = 0
-        for match in unrecorded:
-            try:
-                ok = await _record_prediction_for_match(match["match_url"], model_version=mv)
-                if ok:
-                    recorded += 1
-                await asyncio.sleep(0.5)  # rate limit NRL API
-            except Exception as e:
-                logger.warning(f"Failed to record prediction for {match['match_url']} V{mv}: {e}")
-        logger.info(f"Backfilled {recorded}/{len(unrecorded)} predictions for V{mv}.")
+    unrecorded = get_unrecorded_completed_matches(model_version=3)
+    if not unrecorded:
+        return
+    logger.info(f"Backfilling {len(unrecorded)} prediction(s)...")
+    recorded = 0
+    for match in unrecorded:
+        try:
+            ok = await _record_prediction_for_match(match["match_url"])
+            if ok:
+                recorded += 1
+            await asyncio.sleep(0.5)  # rate limit NRL API
+        except Exception as e:
+            logger.warning(f"Failed to record prediction for {match['match_url']}: {e}")
+    logger.info(f"Backfilled {recorded}/{len(unrecorded)} predictions.")
 
 
 async def _prediction_sync():
@@ -414,13 +410,13 @@ async def get_rounds():
     }
 
 
-def _predict_single_fixture(f, model_version, round_number):
+def _predict_single_fixture(f, round_number):
     """Predict win probability for a single fixture (runs in its own thread)."""
     home = f.get("home_team", "")
     away = f.get("away_team", "")
     if not home or not away:
         return f
-    wp = predict_win_probability(home, away, {}, {}, model_version=model_version,
+    wp = predict_win_probability(home, away, {}, {},
                                  before_season=SEASON, before_round=round_number,
                                  venue=f.get("venue", ""))
     f["predicted_winner"] = wp["predicted_winner"]
@@ -566,7 +562,7 @@ def _build_pick_factors(pred, team_summary, opp_summary, is_home):
     return factors
 
 
-def _enrich_fixtures(fixtures, model_version, round_number):
+def _enrich_fixtures(fixtures, round_number):
     """Add win predictions to all fixtures. Pre-fetches all team data in ONE query."""
     # Collect all teams and matchups (with venues for prefetch)
     team_names = set()
@@ -589,7 +585,7 @@ def _enrich_fixtures(fixtures, model_version, round_number):
 
     # Now run predictions — all DB calls will hit the cache
     for f in fixtures:
-        _predict_single_fixture(f, model_version, round_number)
+        _predict_single_fixture(f, round_number)
 
     # Strip fields the frontend doesn't use
     for f in fixtures:
@@ -601,22 +597,22 @@ def _enrich_fixtures(fixtures, model_version, round_number):
 
 
 # --- Round response cache ---
-_round_cache = {}       # key: (round_number, model_version) -> (response_dict, timestamp)
+_round_cache = {}       # key: round_number -> (response_dict, timestamp)
 _round_cache_lock = threading.Lock()
-_round_refreshing = set()  # keys currently being refreshed in background
+_round_refreshing = set()  # round numbers currently being refreshed in background
 _ROUND_CACHE_TTL_LIVE = 120      # 2 min for rounds with upcoming/live matches
 _ROUND_CACHE_TTL_COMPLETED = 1800  # 30 min for fully completed rounds
 
 
-async def _refresh_round_cache(round_number, model_version):
+async def _refresh_round_cache(round_number):
     """Fetch and compute a round response, store in cache."""
-    cache_key = (round_number, model_version)
+    cache_key = round_number
     try:
         raw = await fetch_round(round_number)
         if raw is None:
             return None
         fixtures, byes = parse_fixtures(raw)
-        fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, model_version, round_number)
+        fixtures = await asyncio.to_thread(_enrich_fixtures, fixtures, round_number)
         response = {
             "round": round_number,
             "name": f"Round {round_number}",
@@ -630,7 +626,7 @@ async def _refresh_round_cache(round_number, model_version):
         try:
             await asyncio.to_thread(
                 save_cache_entry,
-                _cache_key_str(round_number, model_version),
+                _cache_key_str(round_number),
                 json.dumps(response, default=str),
                 refreshed_at,
             )
@@ -643,12 +639,12 @@ async def _refresh_round_cache(round_number, model_version):
 
 @app.get("/api/rounds/{round_number}")
 async def get_round(round_number: int, version: int = 3):
-
-    model_version = max(1, min(version, 3))
+    # `version` is accepted for backward compatibility with old links but
+    # ignored — the app only runs the V3 model now.
     if round_number < 1 or round_number > TOTAL_ROUNDS:
         raise HTTPException(status_code=404, detail="Invalid round number")
 
-    cache_key = (round_number, model_version)
+    cache_key = round_number
     now = time.time()
 
     # Check response cache
@@ -667,11 +663,11 @@ async def get_round(round_number: int, version: int = 3):
         # Stale — return immediately but refresh in background
         if cache_key not in _round_refreshing:
             _round_refreshing.add(cache_key)
-            asyncio.create_task(_refresh_round_cache(round_number, model_version))
+            asyncio.create_task(_refresh_round_cache(round_number))
         return resp
 
     # No cache at all — must compute synchronously
-    response = await _refresh_round_cache(round_number, model_version)
+    response = await _refresh_round_cache(round_number)
     if response is None:
         raise HTTPException(status_code=502, detail="Could not fetch round data from NRL")
     return response
@@ -717,7 +713,7 @@ async def get_player(name: str):
 
 
 def _compute_match_detail(url, raw, home_players, away_players,
-                          model_version, bookmaker_data, is_completed, match_state):
+                          bookmaker_data, is_completed, match_state):
     """Heavy sync computation for match detail — runs in a thread."""
 
     season_match = re.search(r'/(\d{4})/', url)
@@ -748,7 +744,6 @@ def _compute_match_detail(url, raw, home_players, away_players,
         stats.get("home", {}), stats.get("away", {}),
         home_team_name=home_nickname,
         away_team_name=away_nickname,
-        model_version=model_version,
         before_season=before_season,
         before_round=before_round,
         weather=match_weather,
@@ -769,7 +764,6 @@ def _compute_match_detail(url, raw, home_players, away_players,
     win_prediction = predict_win_probability(
         home_nickname, away_nickname,
         stats.get("home", {}), stats.get("away", {}),
-        model_version=model_version,
         before_season=before_season,
         before_round=before_round,
         venue=match_venue,
@@ -782,9 +776,9 @@ def _compute_match_detail(url, raw, home_players, away_players,
         home_nickname, away_nickname,
     )
 
-    home_summary = generate_team_summary(home_nickname, model_version,
+    home_summary = generate_team_summary(home_nickname,
                                           before_season=before_season, before_round=before_round)
-    away_summary = generate_team_summary(away_nickname, model_version,
+    away_summary = generate_team_summary(away_nickname,
                                           before_season=before_season, before_round=before_round)
 
     value_picks_home = find_value_picks(predictions["home"], away_nickname, home_nickname,
@@ -843,7 +837,7 @@ def _compute_match_detail(url, raw, home_players, away_players,
             m_json = json.dumps([{"name": p["name"], "team": p["team"], "scored": p.get("scored")} for p in multi["picks"]])
             upsert_prediction(
                 match_url=url, season=before_season, round_number=before_round,
-                model_version=model_version, home_team=home_nickname, away_team=away_nickname,
+                model_version=3, home_team=home_nickname, away_team=away_nickname,
                 predicted_winner=win_prediction["predicted_winner"],
                 home_win_prob=win_prediction["home_win_prob"],
                 predicted_home_score=win_prediction["predicted_home_score"],
@@ -910,11 +904,10 @@ def _compute_match_detail(url, raw, home_players, away_players,
 
 @app.get("/api/match")
 async def get_match_by_url(url: str, version: int = 3):
-
+    # `version` is accepted for backward compatibility with old links but
+    # ignored — the app only runs the V3 model now.
     if not url.startswith("/draw/"):
         raise HTTPException(status_code=400, detail="Invalid match URL path")
-
-    model_version = max(1, min(version, 3))
 
     raw = await fetch_match_detail(url)
     if raw is None:
@@ -944,7 +937,7 @@ async def get_match_by_url(url: str, version: int = 3):
     # Run all heavy DB/model computation in a thread
     result = await asyncio.to_thread(
         _compute_match_detail, url, raw, home_players, away_players,
-        model_version, bookmaker_data, is_completed, match_state
+        bookmaker_data, is_completed, match_state
     )
     return result
 
@@ -1043,7 +1036,7 @@ async def get_team(name: str, season: int = SEASON):
     edge_vuln = get_team_tries_conceded_by_edge(name, last_n_games=15)
     roster = get_team_roster(name, season=season)
     recent = get_team_recent_results(name, last_n=10)
-    summary = _gen_summary(name, model_version=3)
+    summary = _gen_summary(name)
 
     # Form string (W/L/D for last 10)
     form_str = [r["result"] for r in recent]

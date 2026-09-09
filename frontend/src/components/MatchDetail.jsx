@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import PlayerCard from './PlayerCard'
 import LoadingSpinner from './LoadingSpinner'
+import { fetchJson } from '../api'
 
 export default function MatchDetail({ apiBase }) {
   const [searchParams] = useSearchParams()
@@ -9,55 +10,45 @@ export default function MatchDetail({ apiBase }) {
   const [match, setMatch] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
   const [viewMode, setViewMode] = useState('ranked')
   const [activeTab, setActiveTab] = useState('home')
-  const [modelVersion, setModelVersion] = useState(3)
-  const [versionLoading, setVersionLoading] = useState(false)
   const [expandedPick, setExpandedPick] = useState(null)
   const [roundMatches, setRoundMatches] = useState(null)
 
   const roundMatch = matchUrl ? matchUrl.match(/round-(\d+)/) : null
   const roundNumber = roundMatch ? roundMatch[1] : null
-  const lastMatchUrlRef = React.useRef(matchUrl)
 
   // Fetch match detail
   useEffect(() => {
     if (!matchUrl) { setError('No match URL provided'); setLoading(false); return }
 
-    const matchChanged = lastMatchUrlRef.current !== matchUrl
-    lastMatchUrlRef.current = matchUrl
-
-    if (matchChanged) {
-      setMatch(null)
-      setError(null)
-      setLoading(true)
-      setActiveTab('home')
-      setExpandedPick(null)
-      window.scrollTo(0, 0)
-    } else if (match !== null) {
-      setVersionLoading(true)
-    } else {
-      setLoading(true)
-    }
+    setMatch(null)
+    setError(null)
+    setLoading(true)
+    setActiveTab('home')
+    setExpandedPick(null)
+    window.scrollTo(0, 0)
 
     let cancelled = false
-    fetch(`${apiBase}/match?url=${encodeURIComponent(matchUrl)}&version=${modelVersion}`)
-      .then(r => {
-        if (r.status === 403) throw new Error('Team lists have not been announced for this match yet')
-        if (!r.ok) throw new Error('Could not load match data')
-        return r.json()
+    fetchJson(`${apiBase}/match?url=${encodeURIComponent(matchUrl)}`)
+      .then(data => { if (!cancelled) { setMatch(data); setLoading(false) } })
+      .catch(e => {
+        if (cancelled) return
+        const message = e.status === 403
+          ? 'Team lists have not been announced for this match yet'
+          : e.message || 'Could not load match data'
+        setError(message)
+        setLoading(false)
       })
-      .then(data => { if (!cancelled) { setMatch(data); setLoading(false); setVersionLoading(false) } })
-      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false); setVersionLoading(false) } })
 
     return () => { cancelled = true }
-  }, [apiBase, matchUrl, modelVersion])
+  }, [apiBase, matchUrl, retryCount])
 
   // Fetch round matches for prev/next navigation
   useEffect(() => {
     if (!roundNumber) return
-    fetch(`${apiBase}/rounds/${roundNumber}?version=${modelVersion}`)
-      .then(r => r.ok ? r.json() : null)
+    fetchJson(`${apiBase}/rounds/${roundNumber}`)
       .then(data => { if (data?.matches) setRoundMatches(data.matches) })
       .catch(() => {})
   }, [apiBase, roundNumber])
@@ -91,6 +82,7 @@ export default function MatchDetail({ apiBase }) {
         <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="nav-btn">&larr; Back</Link>
       </div>
       <div className="error-message">{error}</div>
+      <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
   )
   if (!match) return null
@@ -176,61 +168,6 @@ export default function MatchDetail({ apiBase }) {
             </div>
           </div>
         )}
-      </div>
-
-      {/* Model version selector */}
-      <div className="version-selector">
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelVersion === 1 ? 'active' : ''}`}
-            onClick={() => setModelVersion(1)} disabled={versionLoading}>
-            V1 <span className="version-desc">Baseline</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 1 — Baseline Model</strong>
-            <ul>
-              <li>Player try factor based on full career history</li>
-              <li>Team attack/defence from last 10 games only</li>
-              <li>Win prediction: equal-weighted factors (form 30%, H2H 25%, venue 25%, season 20%)</li>
-              <li>No edge vulnerability, weather, or venue-specific adjustments</li>
-            </ul>
-          </div>
-        </div>
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelVersion === 2 ? 'active' : ''}`}
-            onClick={() => setModelVersion(2)} disabled={versionLoading}>
-            V2 <span className="version-desc">Enhanced</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 2 — Enhanced Model</strong>
-            <ul>
-              <li>Player try factor blends 60% last 5 games / 40% career</li>
-              <li>Team attack/defence blends 60% last 5 / 40% last 10 games</li>
-              <li>Edge vulnerability: adjusts probability based on opponent's defensive weaknesses</li>
-              <li>Venue-specific home advantage based on team's record at that ground</li>
-              <li>Weather &amp; ground conditions impact</li>
-            </ul>
-          </div>
-        </div>
-        <div className="version-btn-wrap">
-          <button className={`version-btn ${modelVersion === 3 ? 'active' : ''}`}
-            onClick={() => setModelVersion(3)} disabled={versionLoading}>
-            V3 <span className="version-desc">Full Model</span>
-          </button>
-          <div className="version-tooltip">
-            <strong>Version 3 — Full Model</strong>
-            <ul>
-              <li>All V2 features plus:</li>
-              <li>Margin-of-victory weighted form (quality of wins/losses)</li>
-              <li>Rest days &amp; short turnaround penalties</li>
-              <li>Bye-week freshness boost</li>
-              <li>Opponent-quality adjusted try rates</li>
-              <li>Interchange timing (actual bench minutes)</li>
-              <li>Season progression (early-round discount)</li>
-              <li>Probability calibration from historical accuracy</li>
-            </ul>
-          </div>
-        </div>
-        {versionLoading && <span className="version-loading">Updating...</span>}
       </div>
 
       {/* Combined match header + win prediction + team summaries */}

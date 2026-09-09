@@ -228,112 +228,6 @@ body {
   text-decoration: underline;
 }
 
-/* Model Version Selector */
-.version-selector {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 1rem 0;
-}
-
-.version-btn {
-  padding: 0.5rem 1rem;
-  border: 2px solid #d4d4d4;
-  border-radius: 8px;
-  background: #ffffff;
-  font-size: 0.85rem;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.version-btn .version-desc {
-  font-weight: 400;
-  font-size: 0.75rem;
-  color: #888;
-}
-
-.version-btn.active {
-  background: #22c55e;
-  color: #ffffff;
-  border-color: #22c55e;
-}
-
-.version-btn.active .version-desc {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.version-btn:not(.active):hover {
-  background: #f0f0f0;
-  border-color: #bbb;
-}
-
-.version-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.version-loading {
-  font-size: 0.8rem;
-  color: #888;
-  font-style: italic;
-}
-
-.version-btn-wrap {
-  position: relative;
-}
-
-.version-tooltip {
-  display: none;
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 100;
-  background: #1a1a1a;
-  color: #e5e5e5;
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  width: 320px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  pointer-events: none;
-}
-
-.version-tooltip::before {
-  content: '';
-  position: absolute;
-  top: -6px;
-  left: 20px;
-  width: 12px;
-  height: 12px;
-  background: #1a1a1a;
-  transform: rotate(45deg);
-}
-
-.version-tooltip strong {
-  display: block;
-  color: #22c55e;
-  font-size: 0.82rem;
-  margin-bottom: 0.4rem;
-}
-
-.version-tooltip ul {
-  margin: 0;
-  padding-left: 1.1rem;
-}
-
-.version-tooltip ul li {
-  margin-bottom: 0.2rem;
-}
-
-.version-btn-wrap:hover .version-tooltip {
-  display: block;
-}
-
 .matches-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
@@ -2787,37 +2681,6 @@ body {
   margin-bottom: 2rem;
 }
 
-/* Model comparison table */
-.model-comparison-table {
-  background: #fff;
-  border: 1px solid #e5e5e5;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.mc-row {
-  display: grid;
-  grid-template-columns: 60px repeat(4, 1fr);
-  padding: 0.6rem 1rem;
-  font-size: 0.85rem;
-  align-items: center;
-}
-
-.mc-row:not(:last-child) {
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.mc-heading {
-  font-weight: 700;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  color: #888;
-  background: #fafafa;
-}
-
-.mc-model { font-weight: 700; }
-.mc-val { text-align: center; }
-
 /* Round accuracy chart */
 .round-accuracy-chart {
   display: flex;
@@ -3152,23 +3015,6 @@ body {
   margin-bottom: 0.75rem;
 }
 
-.model-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 3rem;
-  height: 3rem;
-  border-radius: 10px;
-  font-weight: 800;
-  font-size: 1.1rem;
-  color: #fff;
-  letter-spacing: 0.02em;
-}
-
-.model-badge-v1 { background: #6b7280; }
-.model-badge-v2 { background: #3b82f6; }
-.model-badge-v3 { background: #16a34a; }
-
 .model-name {
   font-size: 1.15rem;
   font-weight: 700;
@@ -3192,87 +3038,18 @@ body {
   margin-bottom: 0;
 }
 
-.model-matrix-section {
-  margin-top: 2rem;
-}
-
-.model-matrix-wrap {
-  overflow-x: auto;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-
-.model-matrix {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-
-.model-matrix thead th {
-  background: #f9fafb;
-  text-align: left;
-  padding: 0.75rem 1rem;
-  font-weight: 700;
-  color: #111827;
-  border-bottom: 2px solid #e5e7eb;
-  position: sticky;
-  top: 0;
-}
-
-.model-matrix th.mm-model-col,
-.model-matrix td.mm-model-col {
-  text-align: center;
-  width: 80px;
-}
-
-.model-matrix td {
-  padding: 0.6rem 1rem;
-  border-bottom: 1px solid #f1f5f9;
+.models-factor-list {
+  margin: 0;
+  padding-left: 1.2rem;
   color: #374151;
+  font-size: 0.92rem;
+  line-height: 1.6;
 }
 
-.model-matrix tbody tr:last-child td {
-  border-bottom: none;
+.models-factor-list li {
+  margin-bottom: 0.5rem;
 }
 
-.model-matrix tbody tr:hover td {
-  background: #f9fafb;
-}
-
-.mm-group-row td {
-  background: #f3f4f6 !important;
-  font-weight: 700;
-  color: #111827;
-  text-transform: uppercase;
-  font-size: 0.78rem;
-  letter-spacing: 0.05em;
-  padding: 0.55rem 1rem;
-}
-
-.model-tick {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border-radius: 50%;
-  background: #dcfce7;
-  color: #15803d;
-  font-weight: 800;
-  font-size: 0.95rem;
-}
-
-.model-cross {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border-radius: 50%;
-  background: #fee2e2;
-  color: #b91c1c;
-  font-weight: 800;
-  font-size: 0.95rem;
+.models-factor-list li:last-child {
+  margin-bottom: 0;
 }
