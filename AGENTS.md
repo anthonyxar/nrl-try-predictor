@@ -34,7 +34,7 @@ docker compose up --build
 Backend on :8000, frontend (nginx) on :3000. Requires `ODDS_API_KEY` and `DATABASE_URL` env vars (both optional — app degrades gracefully without them).
 
 ### Data sync cadence
-`.github/workflows/scrape.yml` runs `scrape_job.py` every 30 min on NRL game days (Thu/Fri/Sat/Sun/Mon) against `DATABASE_URL` from GitHub secrets — this is the only thing that keeps the production DB current. The backend itself also runs a background prediction-sync loop (not a scrape) every 10 minutes to backfill accuracy tracking for newly-completed matches.
+The backend runs `_scrape_sync()` (`main.py`) every 30 minutes — a background task, started at startup, that calls `scraper.py`'s `sync_current_season()` directly in-process and invalidates the query cache if it found anything new. This is what keeps the production DB current; see `docs/adr/0005-in-process-scrape-sync.md` for why it isn't an external GitHub Actions cron (short version: that cron proved unreliable — GitHub silently auto-disables a `schedule:` trigger after 60 days of repo inactivity, with no self-recovery, and setting that aside its schedule trigger is best-effort with no SLA anyway). `.github/workflows/scrape.yml` still exists but is `workflow_dispatch:`-only now — manual use for bootstrapping an empty DB or forcing a re-scrape, not ongoing sync. The backend also runs a separate background prediction-sync loop (not a scrape) every 10 minutes to backfill accuracy tracking for newly-completed matches.
 
 ## Architecture
 

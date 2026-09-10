@@ -24,6 +24,7 @@ from model import (
     generate_multi_suggestion, find_value_picks, generate_team_summary,
     invalidate_cache,
 )
+from scraper import sync_current_season
 from database import (
     init_db, get_total_match_count, get_total_try_count,
     get_player_game_log, get_db,
@@ -119,6 +120,7 @@ async def _startup_sequence():
     # immediately, even before the background warmup re-runs.
     _restore_cache_from_db()
 
+    asyncio.create_task(_scrape_sync())
     asyncio.create_task(_prediction_sync())
     asyncio.create_task(_warm_cache())
 
@@ -185,6 +187,7 @@ async def _warm_cache():
 
 
 PREDICTION_SYNC_INTERVAL = 600  # 10 minutes
+SCRAPE_SYNC_INTERVAL = 1800  # 30 minutes — matches the old external cron's cadence
 
 
 async def _record_prediction_for_match(match_url: str, model_version: int = 3):
@@ -345,6 +348,30 @@ async def _prediction_sync():
             return
         except Exception as e:
             logger.error(f"Prediction sync error: {e}")
+
+
+async def _scrape_sync():
+    """Background task: periodically sync the current season's completed
+    matches into the DB. Replaces relying on an external GitHub Actions
+    cron — that schedule trigger proved unreliable (subject to queueing
+    delays under GitHub's load, and GitHub auto-disables a schedule after
+    60 days of repo inactivity with no way for it to self-recover; see
+    docs/adr for the incident this came from). Runs in this same
+    always-on process instead, so scraping now depends only on this
+    service's own uptime (already monitored via the external health-check
+    ping), not on GitHub's scheduler.
+    """
+    while True:
+        try:
+            new_matches = await sync_current_season()
+            if new_matches:
+                invalidate_cache()
+                logger.info(f"Scrape sync added {new_matches} new matches — cache invalidated.")
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.error(f"Scrape sync error: {e}")
+        await asyncio.sleep(SCRAPE_SYNC_INTERVAL)
 
 
 app = FastAPI(title="NRL Try Predictor", version="3.0.0", lifespan=lifespan)

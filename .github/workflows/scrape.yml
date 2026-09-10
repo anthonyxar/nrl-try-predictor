@@ -1,11 +1,14 @@
 name: Scrape NRL Data
 
+# No `schedule:` trigger — ongoing scraping now runs as a background loop
+# inside the backend itself (main.py's _scrape_sync, every 30 min), since
+# GitHub's schedule trigger proved unreliable (queueing delays under load,
+# and GitHub auto-disables it after 60 days of repo inactivity with no
+# self-recovery — see docs/adr/0005-in-process-scrape-sync.md). This
+# workflow is kept for manual use: bootstrapping an empty DB, or a manual
+# full/incremental re-scrape if the backend's own loop is ever suspect.
 on:
-  schedule:
-    # Every 30 minutes, Thursday through Monday (NRL game days)
-    # Cron day-of-week: 0=Sun, 1=Mon, 4=Thu, 5=Fri, 6=Sat
-    - cron: '*/30 * * * 0,1,4,5,6'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   scrape:

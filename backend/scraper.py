@@ -480,6 +480,7 @@ async def sync_current_season():
 
     count = get_total_match_count()
     logger.info(f"Sync complete. {new_matches} new matches added. DB total: {count}.")
+    return new_matches
 
 
 def run_scraper():
