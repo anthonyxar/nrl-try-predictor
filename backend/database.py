@@ -2391,33 +2391,63 @@ def get_all_players(season: int = None) -> list:
 
 
 def get_team_roster(team_name: str, season: int = None) -> list:
-    """Get all players who played for a team, optionally in a specific season."""
+    """Get all players who played for a team, optionally scoped to a
+    season — one row per player, not per position. This used to group by
+    (name, position, jersey_number), so a player who played more than one
+    position for the team came back as multiple rows, one per position —
+    exactly the same class of bug fixed in search_players, in a different
+    query. Position shown is whichever they played the most games at;
+    games/tries are summed across all their appearances. Groups by a
+    normalised name too, for the same reason as search_players: NRL's
+    scraped data isn't always internally consistent about apostrophes in a
+    player's name."""
     conn = get_db()
-    if season:
-        rows = conn.execute("""
-            SELECT p.name, p.position, p.jersey_number,
-                   COUNT(DISTINCT m.id) as games,
-                   (SELECT COUNT(*) FROM tries t
-                    JOIN matches m2 ON t.match_id = m2.id
-                    WHERE t.player_name = p.name AND t.team = %s
-                      AND m2.season = %s) as tries
-            FROM players p
-            JOIN matches m ON p.match_id = m.id
-            WHERE p.team = %s AND m.season = %s AND m.match_state = 'FullTime'
-            GROUP BY p.name, p.position, p.jersey_number
-            ORDER BY MIN(p.jersey_number), p.name
-        """, (team_name, season, team_name, season)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT p.name, p.position, p.jersey_number,
-                   COUNT(DISTINCT m.id) as games,
-                   (SELECT COUNT(*) FROM tries t WHERE t.player_name = p.name AND t.team = %s) as tries
+    rows = conn.execute("""
+        WITH base AS (
+            SELECT p.name, p.position, p.jersey_number, p.match_id,
+                   lower(regexp_replace(p.name, '[^a-zA-Z0-9]', '', 'g')) AS norm_name,
+                   (m.season * 100 + m.round_number) AS round_key
             FROM players p
             JOIN matches m ON p.match_id = m.id
             WHERE p.team = %s AND m.match_state = 'FullTime'
-            GROUP BY p.name, p.position, p.jersey_number
-            ORDER BY MIN(p.jersey_number), p.name
-        """, (team_name, team_name)).fetchall()
+              AND (%s::int IS NULL OR m.season = %s::int)
+        ),
+        position_counts AS (
+            SELECT norm_name, position, COUNT(*) AS games_at_position,
+                   MAX(round_key) AS latest_round_at_position
+            FROM base
+            WHERE position IS NOT NULL AND position <> ''
+            GROUP BY norm_name, position
+        ),
+        primary_position AS (
+            SELECT DISTINCT ON (norm_name) norm_name, position AS primary_position
+            FROM position_counts
+            ORDER BY norm_name, games_at_position DESC, latest_round_at_position DESC
+        ),
+        display AS (
+            SELECT DISTINCT ON (norm_name) norm_name, name, jersey_number, round_key AS latest_round
+            FROM base
+            ORDER BY norm_name, round_key DESC
+        ),
+        totals AS (
+            SELECT norm_name, COUNT(DISTINCT match_id) AS games
+            FROM base
+            GROUP BY norm_name
+        )
+        SELECT d.name,
+               pp.primary_position AS position,
+               d.jersey_number,
+               COALESCE(tot.games, 0) AS games,
+               (SELECT COUNT(*) FROM tries t
+                  JOIN matches m2 ON t.match_id = m2.id
+                  WHERE lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) = d.norm_name
+                    AND t.team = %s
+                    AND (%s::int IS NULL OR m2.season = %s::int)) AS tries
+        FROM display d
+        LEFT JOIN primary_position pp ON pp.norm_name = d.norm_name
+        LEFT JOIN totals tot ON tot.norm_name = d.norm_name
+        ORDER BY d.jersey_number, d.name
+    """, (team_name, season, season, team_name, season, season)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
