@@ -13,6 +13,7 @@ import time
 from database import (
     init_db, get_db, is_round_scraped, mark_round_scraped,
     insert_match, bulk_insert_match_data, get_total_match_count,
+    repair_scrape_progress,
 )
 
 logger = logging.getLogger(__name__)
@@ -396,11 +397,18 @@ async def sync_current_season():
     """
     Incrementally sync the current season.
     Only processes newly completed matches that don't already exist in the DB.
-    Skips fully-scraped rounds entirely. Stops at the first round with no completed matches.
+    Skips fully-scraped rounds entirely. Stops at the first round NRL hasn't
+    actually drawn yet.
     """
     init_db()
     logger.info("Starting current season sync...")
+
+    repaired = repair_scrape_progress(CURRENT_SEASON)
+    if repaired:
+        logger.warning(f"Re-checking rounds {repaired} — previously marked scraped with no matches recorded.")
+
     new_matches = 0
+    prev_urls = None  # fixture match_urls from the last round we actually fetched
 
     async with httpx.AsyncClient(headers=HEADERS, timeout=20.0, follow_redirects=False) as client:
         for rnd in range(1, CURRENT_SEASON_ROUNDS + 1):
@@ -416,6 +424,31 @@ async def sync_current_season():
                 fixtures = data.get("fixtures", [])
                 if not fixtures:
                     continue
+
+                # NRL doesn't error for a round beyond what's currently
+                # drawn — it echoes back the latest real round's fixtures
+                # (same match_urls), which would otherwise look like a
+                # genuine, fully-completed round and get permanently marked
+                # scraped despite having nothing real to insert (see
+                # repair_scrape_progress). If we don't have the previous
+                # round's fixtures in hand (e.g. it was already marked
+                # scraped and skipped above), fetch it fresh to compare.
+                fixture_urls = {f.get("matchCentreUrl") for f in fixtures
+                                 if isinstance(f, dict) and f.get("matchCentreUrl")}
+                compare_urls = prev_urls
+                if compare_urls is None and rnd > 1:
+                    prev_data = await _get_json(
+                        client,
+                        f"{BASE_URL}/draw/data?competition={COMPETITION_ID}&season={CURRENT_SEASON}&round={rnd - 1}",
+                        f"{CURRENT_SEASON} R{rnd - 1} (echo-check)",
+                    )
+                    if prev_data is not None:
+                        compare_urls = {f.get("matchCentreUrl") for f in prev_data.get("fixtures", [])
+                                         if isinstance(f, dict) and f.get("matchCentreUrl")}
+                if compare_urls and fixture_urls and fixture_urls == compare_urls:
+                    logger.info(f"Round {rnd}: fixtures are an echo of the previous round — not drawn yet, stopping.")
+                    break
+                prev_urls = fixture_urls
 
                 completed = [f for f in fixtures if isinstance(f, dict)
                              and f.get("matchState") in ("FullTime", "PostMatch")]

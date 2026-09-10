@@ -396,6 +396,38 @@ def reset_scrape_progress():
     logger.info("Scrape progress reset — full re-scrape will occur on next startup")
 
 
+def repair_scrape_progress(season: int) -> list:
+    """Clear any scrape_progress rows wrongly marked complete for a round
+    that has zero actual matches recorded. NRL echoes the last real round's
+    fixtures for a round it hasn't drawn yet (same behaviour the live round
+    view works around — see main.py's _is_undrawn_echo); before
+    sync_current_season() had its own echo-detection, an echoed round's
+    fixtures all looked FullTime and already existed in the DB (they were
+    really the previous round's matches), so nothing new got inserted but
+    the round still got marked fully scraped — permanently skipping it on
+    every future sync. Returns the round numbers that were reset."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT sp.round_number
+        FROM scrape_progress sp
+        WHERE sp.season = %s AND sp.completed = 1
+          AND NOT EXISTS (
+              SELECT 1 FROM matches m
+              WHERE m.season = sp.season AND m.round_number = sp.round_number
+          )
+    """, (season,)).fetchall()
+    bad_rounds = [r["round_number"] for r in rows]
+    if bad_rounds:
+        conn.execute(
+            "DELETE FROM scrape_progress WHERE season = %s AND round_number = ANY(%s)",
+            (season, bad_rounds),
+        )
+        conn.commit()
+        logger.warning(f"Repaired scrape_progress for {season}: reset rounds {bad_rounds} (marked complete with no matches)")
+    conn.close()
+    return bad_rounds
+
+
 def mark_round_scraped(season: int, round_number: int):
     conn = get_db()
     conn.execute(
