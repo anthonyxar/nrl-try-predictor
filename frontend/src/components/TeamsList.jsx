@@ -83,7 +83,6 @@ export default function TeamsList({ apiBase }) {
                 <span className="ld-num">PA</span>
                 <span className="ld-num">PD</span>
                 <span className="ld-num ld-pts">Pts</span>
-                <span className="ld-streak">Streak</span>
               </div>
               {ladder.map(row => (
                 <div
@@ -113,9 +112,6 @@ export default function TeamsList({ apiBase }) {
                   <span className="ld-num">{row.points_against}</span>
                   <span className="ld-num">{row.points_diff > 0 ? `+${row.points_diff}` : row.points_diff}</span>
                   <span className="ld-num ld-pts">{row.comp_points}</span>
-                  <span className={`ld-streak ${row.streak?.endsWith('W') ? 'win' : row.streak?.endsWith('L') ? 'loss' : ''}`}>
-                    {row.streak}
-                  </span>
                 </div>
               ))}
             </div>
@@ -123,25 +119,6 @@ export default function TeamsList({ apiBase }) {
         ) : (
           <div className="error-message">No ladder data available for {season}.</div>
         )}
-      </div>
-
-      <div className="teams-grid">
-        {teams.map(t => (
-          <button key={t.name} className="team-card" onClick={() => goToTeam(t.name)}>
-            <div className="team-card-badge-wrap">
-              <img
-                className="team-card-badge"
-                src={`https://www.nrl.com/.theme/${t.theme_key || 'nrl'}/badge.svg`}
-                alt={t.name}
-                onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }}
-              />
-              <div className="team-card-badge-fallback" style={{ backgroundColor: t.colour, display: 'none' }}>
-                {t.name.substring(0, 3).toUpperCase()}
-              </div>
-            </div>
-            <span className="team-card-name">{t.name}</span>
-          </button>
-        ))}
       </div>
     </div>
   )

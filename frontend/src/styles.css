@@ -3561,7 +3561,7 @@ body {
 
 .ladder-row {
   display: grid;
-  grid-template-columns: 44px 1fr repeat(6, 40px) 50px 50px 60px;
+  grid-template-columns: 44px 1fr repeat(6, 40px) 50px 50px;
   align-items: center;
   padding: 0.5rem 1rem;
   font-size: 0.82rem;
@@ -3638,79 +3638,6 @@ body {
 
 .ld-pts {
   font-weight: 800;
-  color: var(--text-primary);
-}
-
-.ld-streak {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-align: center;
-}
-
-.ld-streak.win {
-  color: var(--accent);
-}
-
-.ld-streak.loss {
-  color: #dc2626;
-}
-
-.teams-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 1rem;
-}
-
-.team-card {
-  background: var(--surface);
-  border: 1px solid transparent;
-  box-shadow: var(--shadow-sm);
-  border-radius: var(--radius-lg);
-  padding: 1.5rem 1rem;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.75rem;
-  font-family: inherit;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
-}
-
-.team-card:hover {
-  box-shadow: var(--shadow-md);
-  transform: translateY(-3px);
-}
-
-.team-card-badge-wrap {
-  width: 56px;
-  height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.team-card-badge {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.team-card-badge-fallback {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-weight: 800;
-  font-size: 0.85rem;
-}
-
-.team-card-name {
-  font-size: 0.85rem;
-  font-weight: 700;
-  text-align: center;
   color: var(--text-primary);
 }
 
@@ -3840,9 +3767,5 @@ body {
   .betting-pick-row .bp-edge,
   .betting-pick-row .bp-status {
     display: none;
-  }
-
-  .teams-grid {
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
   }
 }
