@@ -15,8 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, JSONResponse
 
 from nrl_client import (
-    fetch_round, fetch_match_detail,
-    parse_fixtures, parse_team_list, parse_team_stats, parse_scoring,
+    fetch_round, fetch_match_detail, fetch_ladder,
+    parse_fixtures, parse_team_list, parse_team_stats, parse_scoring, parse_ladder,
     TOTAL_ROUNDS, SEASON,
 )
 from model import (
@@ -1337,6 +1337,17 @@ async def get_team_schedule(name: str, season: int = SEASON):
         ]
 
     return {"team": name, "season": season, "matches": matches}
+
+
+@app.get("/api/ladder")
+async def get_ladder(season: int = SEASON):
+    """Competition ladder for a season, straight from NRL's own ladder API
+    (regular season only — finals don't change comp points, same as NRL's
+    own ladder page)."""
+    raw = await fetch_ladder(season)
+    if raw is None:
+        raise HTTPException(status_code=502, detail="Could not fetch ladder data from NRL")
+    return {"season": season, "ladder": parse_ladder(raw)}
 
 
 @app.get("/api/teams")

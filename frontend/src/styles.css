@@ -3540,6 +3540,121 @@ body {
   font-weight: 700;
 }
 
+/* ========================================
+   Ladder
+   ======================================== */
+.ladder-section {
+  margin-bottom: 2rem;
+}
+
+.ladder-table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid transparent;
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-md);
+}
+
+.ladder-table {
+  min-width: 640px;
+}
+
+.ladder-row {
+  display: grid;
+  grid-template-columns: 44px 1fr repeat(6, 40px) 50px 60px;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.82rem;
+  gap: 0.4rem;
+}
+
+.ladder-row:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.ladder-row.finals-cutoff {
+  border-bottom: 2px solid var(--accent);
+}
+
+.ladder-row.clickable {
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.ladder-row.clickable:hover {
+  background: var(--accent-soft);
+}
+
+.ladder-heading {
+  font-weight: 700;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  background: var(--bg);
+}
+
+.ld-pos {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.ld-move {
+  font-size: 0.55rem;
+}
+
+.ld-move.up {
+  color: var(--accent);
+}
+
+.ld-move.down {
+  color: #dc2626;
+}
+
+.ld-team {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ld-team-badge {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.ld-num {
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.ld-pts {
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.ld-streak {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.ld-streak.win {
+  color: var(--accent);
+}
+
+.ld-streak.loss {
+  color: #dc2626;
+}
+
 .teams-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

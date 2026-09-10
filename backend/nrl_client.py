@@ -90,6 +90,51 @@ async def fetch_round(round_number: int) -> Optional[dict]:
     return data
 
 
+async def fetch_ladder(season: int) -> Optional[dict]:
+    """Fetch the competition ladder for a season from the NRL API. Ladder
+    standings only reflect the regular season (finals don't change comp
+    points), which is what NRL's own ladder page shows too."""
+    cache_key = f"ladder_{season}"
+    now = time.time()
+    cached = _nrl_api_cache.get(cache_key)
+    if cached and now - cached[1] < _NRL_CACHE_TTL:
+        return cached[0]
+
+    url = f"{BASE_URL}/ladder/data?competition={COMPETITION_ID}&season={season}"
+    data = await _get_json(url, f"ladder {season}")
+    if data is None:
+        return None
+    _nrl_api_cache[cache_key] = (data, now)
+    return data
+
+
+def parse_ladder(raw_data: dict) -> list:
+    """Parse the NRL ladder into a clean list of team standings. NRL
+    returns `positions` already ranked (index 0 is 1st) with no explicit
+    rank field of its own, so list order is the source of truth."""
+    ladder = []
+    for i, entry in enumerate(raw_data.get("positions", [])):
+        stats = entry.get("stats", {})
+        theme = entry.get("theme", {})
+        ladder.append({
+            "position": i + 1,
+            "team": entry.get("teamNickname", ""),
+            "theme_key": theme.get("key", "") if isinstance(theme, dict) else "",
+            "movement": entry.get("movement", ""),
+            "played": stats.get("played", 0),
+            "wins": stats.get("wins", 0),
+            "drawn": stats.get("drawn", 0),
+            "lost": stats.get("lost", 0),
+            "byes": stats.get("byes", 0),
+            "points_for": stats.get("points for", 0),
+            "points_against": stats.get("points against", 0),
+            "points_diff": stats.get("points difference", 0),
+            "comp_points": stats.get("points", 0),
+            "streak": stats.get("streak", ""),
+        })
+    return ladder
+
+
 async def fetch_match_detail(match_url_path: str) -> Optional[dict]:
     """
     Fetch full match detail including team lists.
