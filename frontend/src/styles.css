@@ -3754,6 +3754,28 @@ body {
   font-size: 0.8rem;
 }
 
+.sortable-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sortable-header:hover {
+  color: var(--accent);
+}
+
+.sortable-header.active {
+  color: var(--accent);
+}
+
+.sort-arrow {
+  font-size: 0.6rem;
+  width: 0.6rem;
+  display: inline-block;
+}
+
 @media (max-width: 640px) {
   .betting-stat-tiles {
     grid-template-columns: repeat(2, 1fr);
