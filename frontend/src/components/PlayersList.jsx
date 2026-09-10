@@ -4,6 +4,8 @@ import LoadingSpinner from './LoadingSpinner'
 import TeamSelect from './TeamSelect'
 import { fetchJson } from '../api'
 
+const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
+
 const SORT_FIELDS = {
   name: p => p.name || '',
   position: p => p.position || '',
@@ -20,6 +22,7 @@ export default function PlayersList({ apiBase }) {
   const [query, setQuery] = useState('')
   const [position, setPosition] = useState('all')
   const [team, setTeam] = useState('')
+  const [season, setSeason] = useState('')
   const [sortKey, setSortKey] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
   const [retryCount, setRetryCount] = useState(0)
@@ -29,11 +32,12 @@ export default function PlayersList({ apiBase }) {
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetchJson(`${apiBase}/players`)
+    const url = season ? `${apiBase}/players?season=${season}` : `${apiBase}/players`
+    fetchJson(url)
       .then(data => { if (!cancelled) { setPlayers(data); setLoading(false) } })
       .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
     return () => { cancelled = true }
-  }, [apiBase, retryCount])
+  }, [apiBase, season, retryCount])
 
   // Canonical team list (with badge theme/colour) for the team filter —
   // same source TeamSelect uses on the Team Stats page, so both pickers
@@ -102,6 +106,10 @@ export default function PlayersList({ apiBase }) {
             <option value="all">All Positions</option>
             {positions.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
+          <select className="season-select" value={season} onChange={(e) => setSeason(e.target.value)}>
+            <option value="">All Seasons</option>
+            {SEASONS.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
         </div>
       </div>
 
@@ -110,8 +118,8 @@ export default function PlayersList({ apiBase }) {
           <SortHeader className="roster-name" label="Player" sortKey="name" activeKey={sortKey} dir={sortDir} onClick={handleSort} />
           <SortHeader className="roster-pos" label="Position" sortKey="position" activeKey={sortKey} dir={sortDir} onClick={handleSort} />
           <SortHeader className="players-team" label="Team" sortKey="team" activeKey={sortKey} dir={sortDir} onClick={handleSort} />
-          <SortHeader className="roster-games" label="Games" sortKey="total_games" activeKey={sortKey} dir={sortDir} onClick={handleSort} />
-          <SortHeader className="roster-tries" label="Tries" sortKey="total_tries" activeKey={sortKey} dir={sortDir} onClick={handleSort} />
+          <SortHeader className="roster-games" label={season ? `Games (${season})` : 'Games'} sortKey="total_games" activeKey={sortKey} dir={sortDir} onClick={handleSort} />
+          <SortHeader className="roster-tries" label={season ? `Tries (${season})` : 'Tries'} sortKey="total_tries" activeKey={sortKey} dir={sortDir} onClick={handleSort} />
         </div>
         {filtered.map(p => (
           <div key={p.name} className="roster-row clickable"

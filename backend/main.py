@@ -1364,9 +1364,10 @@ async def list_teams():
 
 
 @app.get("/api/players")
-async def list_players():
-    """List every player with their most recent team/position and career totals."""
-    return get_all_players()
+async def list_players(season: int = None):
+    """List every player. Pass `season` to scope players/position/totals to
+    that season only; omitted, totals are career-wide."""
+    return get_all_players(season=season)
 
 
 # Serve frontend

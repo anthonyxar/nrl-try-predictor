@@ -2267,14 +2267,14 @@ def update_player_headshots(name_to_url: dict):
         conn.close()
 
 
-def search_players(query: str, limit: int = 20) -> list:
+def search_players(query: str, limit: int = 20, season: int = None) -> list:
     """Search for players by name. Returns one row per player: their most
-    recent team, career totals, and latest known headshot URL, plus their
-    *primary* position — the position they've played the most games at
-    (ties broken by whichever was more recent), not just whatever position
-    they happened to play in their single most recent game. A utility/bench
-    player who's spent most of their career at, say, 2nd Row but filled in
-    at Interchange last week should still show as a 2nd Row player here.
+    recent team, latest known headshot URL, plus their *primary* position —
+    the position they've played the most games at (ties broken by whichever
+    was more recent), not just whatever position they happened to play in
+    their single most recent game. A utility/bench player who's spent most
+    of their career at, say, 2nd Row but filled in at Interchange last week
+    should still show as a 2nd Row player here.
 
     Grouping is done on a normalised name (lowercased, punctuation/whitespace
     stripped) rather than the literal `players.name` string — NRL's own data
@@ -2286,7 +2286,11 @@ def search_players(query: str, limit: int = 20) -> list:
     position happened to attach to that particular name spelling. The
     displayed name itself still comes from whichever literal spelling was
     used in that player's most recent game.
-    Uses ILIKE for case-insensitive matching."""
+
+    `season`, when given, scopes everything (which players appear at all,
+    their primary position, total_games, total_tries) to that season only —
+    total_games/total_tries are otherwise career totals. Uses ILIKE for
+    case-insensitive matching."""
     conn = get_db()
     rows = conn.execute("""
         WITH base AS (
@@ -2296,6 +2300,7 @@ def search_players(query: str, limit: int = 20) -> list:
             FROM players p
             JOIN matches m ON p.match_id = m.id
             WHERE p.name ILIKE %s AND m.match_state = 'FullTime'
+              AND (%s::int IS NULL OR m.season = %s::int)
         ),
         position_counts AS (
             SELECT norm_name, position, COUNT(*) AS games_at_position,
@@ -2327,7 +2332,9 @@ def search_players(query: str, limit: int = 20) -> list:
                l.latest_round,
                COALESCE(tot.total_games, 0) AS total_games,
                (SELECT COUNT(*) FROM tries t
-                  WHERE lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) = l.norm_name) AS total_tries,
+                  JOIN matches mt ON t.match_id = mt.id
+                  WHERE lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) = l.norm_name
+                    AND (%s::int IS NULL OR mt.season = %s::int)) AS total_tries,
                (SELECT p3.headshot
                   FROM players p3
                   JOIN matches m3 ON p3.match_id = m3.id
@@ -2341,7 +2348,7 @@ def search_players(query: str, limit: int = 20) -> list:
         LEFT JOIN totals tot ON tot.norm_name = l.norm_name
         ORDER BY l.latest_round DESC
         LIMIT %s
-    """, (f"%{query}%", limit)).fetchall()
+    """, (f"%{query}%", season, season, season, season, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -2375,11 +2382,12 @@ def get_all_teams() -> list:
 
 
 @_cached_query("all_players")
-def get_all_players() -> list:
-    """Get every player with their most recent team/position and career totals,
-    for the Player Stats index page. Reuses `search_players`'s query — an
-    empty query string ILIKE-matches every name."""
-    return search_players("", limit=10000)
+def get_all_players(season: int = None) -> list:
+    """Get every player, for the Player Stats index page. Reuses
+    `search_players`'s query — an empty query string ILIKE-matches every
+    name. `season`, when given, scopes players/position/totals to that
+    season only (see search_players); omitted, totals are career-wide."""
+    return search_players("", limit=10000, season=season)
 
 
 def get_team_roster(team_name: str, season: int = None) -> list:
