@@ -313,6 +313,30 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_season ON predictions(season, round_number)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_version ON predictions(model_version)")
 
+    # Betting-edge pick tracking — one row per match: the single best positive
+    # model-vs-bookmaker edge try-scorer pick, captured once (pre-kickoff) and
+    # never overwritten, so the Dashboard's profit/loss simulation isn't
+    # subject to look-ahead bias from odds moving closer to kickoff.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS edge_picks (
+            id SERIAL PRIMARY KEY,
+            match_url TEXT UNIQUE NOT NULL,
+            season INTEGER NOT NULL,
+            round_number INTEGER NOT NULL,
+            home_team TEXT NOT NULL,
+            away_team TEXT NOT NULL,
+            player_name TEXT NOT NULL,
+            player_team TEXT NOT NULL,
+            model_probability REAL NOT NULL,
+            bookmaker_decimal_odds REAL NOT NULL,
+            bookmaker_name TEXT,
+            implied_probability REAL NOT NULL,
+            edge REAL NOT NULL,
+            captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_picks_season ON edge_picks(season, round_number)")
+
     # Persistent in-memory response cache (survives restarts)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cache_store (
@@ -1560,6 +1584,95 @@ def get_accuracy_stats(model_version: int = None, season: int = None) -> dict:
     }
 
 
+# ---- Betting-edge pick tracking ----
+
+
+def get_edge_pick(match_url: str) -> dict:
+    """Check whether a betting-edge pick has already been captured for this match."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM edge_picks WHERE match_url = %s", (match_url,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_edge_pick(match_url: str, season: int, round_number: int, home_team: str, away_team: str,
+                   player_name: str, player_team: str, model_probability: float,
+                   bookmaker_decimal_odds: float, bookmaker_name: str,
+                   implied_probability: float, edge: float):
+    """Record the best-edge try-scorer pick for a match. Captured once — never updated."""
+    conn = get_db()
+    conn.execute("""
+        INSERT INTO edge_picks
+            (match_url, season, round_number, home_team, away_team, player_name, player_team,
+             model_probability, bookmaker_decimal_odds, bookmaker_name, implied_probability, edge)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (match_url) DO NOTHING
+    """, (match_url, season, round_number, home_team, away_team, player_name, player_team,
+          model_probability, bookmaker_decimal_odds, bookmaker_name, implied_probability, edge))
+    conn.commit()
+    conn.close()
+
+
+def get_betting_summary() -> dict:
+    """
+    Simulate profit/loss (per $1 of stake) from betting on every captured
+    best-edge pick. A pick is 'settled' once its match has a recorded score;
+    the pick's player is checked against the `tries` table to determine
+    win/loss. Amounts are per-unit-stake so the frontend can scale by the
+    user's chosen stake without a refetch.
+    """
+    conn = get_db()
+    picks = conn.execute("SELECT * FROM edge_picks ORDER BY captured_at ASC").fetchall()
+
+    results = []
+    wins = 0
+    losses = 0
+    total_profit = 0.0
+
+    for pick in picks:
+        match = conn.execute(
+            "SELECT id, home_score, away_score FROM matches WHERE match_url = %s",
+            (pick["match_url"],),
+        ).fetchone()
+
+        status = "pending"
+        profit = 0.0
+        if match is not None and match["home_score"] is not None and match["away_score"] is not None:
+            scored = conn.execute(
+                "SELECT 1 FROM tries WHERE match_id = %s AND player_name = %s LIMIT 1",
+                (match["id"], pick["player_name"]),
+            ).fetchone() is not None
+            if scored:
+                status = "won"
+                profit = pick["bookmaker_decimal_odds"] - 1
+                wins += 1
+            else:
+                status = "lost"
+                profit = -1.0
+                losses += 1
+            total_profit += profit
+
+        results.append({**dict(pick), "status": status, "profit_per_unit_stake": round(profit, 3)})
+
+    conn.close()
+
+    settled = wins + losses
+    return {
+        "picks": results,
+        "total_picks": len(results),
+        "settled": settled,
+        "pending": len(results) - settled,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / settled, 3) if settled else 0,
+        "total_profit_per_unit_stake": round(total_profit, 3),
+        "roi_per_unit_stake": round(total_profit / settled, 3) if settled else 0,
+        "tracking_since": results[0]["captured_at"] if results else None,
+    }
+
+
 # ---- Venue/weather stats ----
 
 
@@ -2192,6 +2305,14 @@ def get_all_teams() -> list:
     """).fetchall()
     conn.close()
     return [r["name"] for r in rows]
+
+
+@_cached_query("all_players")
+def get_all_players() -> list:
+    """Get every player with their most recent team/position and career totals,
+    for the Player Stats index page. Reuses `search_players`'s query — an
+    empty query string ILIKE-matches every name."""
+    return search_players("", limit=10000)
 
 
 def get_team_roster(team_name: str, season: int = None) -> list:

@@ -22,14 +22,16 @@ export default function WeekSelector({ apiBase }) {
 
   if (loading) return (
     <div className="week-selector">
-      <h2>Select a Round</h2>
+      <Hero />
+      <h2>All Rounds</h2>
       <LoadingSpinner text="Loading rounds..." />
     </div>
   )
 
   if (error) return (
     <div className="week-selector">
-      <h2>Select a Round</h2>
+      <Hero />
+      <h2>All Rounds</h2>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
@@ -37,7 +39,8 @@ export default function WeekSelector({ apiBase }) {
 
   return (
     <div className="week-selector">
-      <h2>Select a Round</h2>
+      <Hero />
+      <h2>All Rounds</h2>
       <div className="rounds-grid">
         {Object.entries(rounds).map(([num, info]) => (
           <button
@@ -49,6 +52,16 @@ export default function WeekSelector({ apiBase }) {
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+function Hero() {
+  return (
+    <div className="home-hero">
+      <span className="home-hero-eyebrow">2026 NRL Season</span>
+      <h1>Know who's <span className="accent">scoring tries</span> before kickoff</h1>
+      <p>Player try-scoring probabilities, win predictions and value picks for every match, built from years of NRL data.</p>
     </div>
   )
 }

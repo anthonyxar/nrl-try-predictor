@@ -137,6 +137,43 @@ async def fetch_bookmaker_odds() -> dict:
         return {}
 
 
+def compute_best_edge_pick(home_players: list, away_players: list, home_team: str, away_team: str,
+                            season: int, round_number: int, match_url: str) -> Optional[dict]:
+    """
+    Find the single best positive betting-edge try-scorer pick across both
+    teams for a match: model probability vs. the best bookmaker price on
+    offer. Returns None if no player has a positive edge (or no bookmaker
+    odds were attached at all). Distinct from `find_value_picks` in
+    model.py, which has nothing to do with bookmaker odds.
+    """
+    best = None
+    for players, team in [(home_players, home_team), (away_players, away_team)]:
+        for p in players:
+            bk_list = p.get("bookmaker_odds")
+            if not bk_list:
+                continue
+            best_bk = max(bk_list, key=lambda b: b["decimal"])
+            implied = 1.0 / best_bk["decimal"]
+            model_prob = p.get("try_percentage", 0) / 100.0
+            edge = model_prob - implied
+            if edge > 0 and (best is None or edge > best["edge"]):
+                best = {
+                    "match_url": match_url,
+                    "season": season,
+                    "round_number": round_number,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "player_name": p["name"],
+                    "player_team": team,
+                    "model_probability": round(model_prob, 4),
+                    "bookmaker_decimal_odds": best_bk["decimal"],
+                    "bookmaker_name": best_bk["bookmaker"],
+                    "implied_probability": round(implied, 4),
+                    "edge": round(edge, 4),
+                }
+    return best
+
+
 def _normalise(name: str) -> str:
     return " ".join(name.lower().strip().split())
 

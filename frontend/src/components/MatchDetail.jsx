@@ -69,7 +69,7 @@ export default function MatchDetail({ apiBase }) {
   if (loading) return (
     <div className="match-detail">
       <div className="nav-bar sticky">
-        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="nav-btn">
+        <Link to={roundNumber ? `/round/${roundNumber}` : '/predictions'} className="nav-btn">
           &larr; {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
         </Link>
       </div>
@@ -79,7 +79,7 @@ export default function MatchDetail({ apiBase }) {
   if (error) return (
     <div className="error-container">
       <div className="nav-bar sticky">
-        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="nav-btn">&larr; Back</Link>
+        <Link to={roundNumber ? `/round/${roundNumber}` : '/predictions'} className="nav-btn">&larr; Back</Link>
       </div>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
@@ -142,7 +142,7 @@ export default function MatchDetail({ apiBase }) {
   return (
     <div className="match-detail">
       <div className="nav-bar sticky">
-        <Link to={roundNumber ? `/round/${roundNumber}` : '/'} className="nav-btn">
+        <Link to={roundNumber ? `/round/${roundNumber}` : '/predictions'} className="nav-btn">
           &larr; {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
         </Link>
         {roundMatches && roundMatches.length > 1 && (

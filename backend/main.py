@@ -28,7 +28,7 @@ from database import (
     init_db, get_total_match_count, get_total_try_count,
     get_player_game_log, get_db,
     upsert_prediction, get_accuracy_stats, get_unrecorded_completed_matches,
-    search_players, search_teams, get_all_teams,
+    search_players, search_teams, get_all_teams, get_all_players,
     get_team_roster, get_team_recent_results,
     get_team_attack_defence, get_home_away_win_rate,
     get_team_tries_conceded_by_edge, get_venue_stats,
@@ -36,12 +36,14 @@ from database import (
     get_player_headshot, update_player_headshots,
     save_cache_entry, load_all_cache_entries,
     prune_old_logs,
+    get_edge_pick, save_edge_pick, get_betting_summary,
 )
 from odds_client import (
     add_implied_odds_to_players,
     fetch_bookmaker_odds,
     lookup_bookmaker_odds,
     has_api_key as has_odds_api_key,
+    compute_best_edge_pick,
 )
 import log_handler
 
@@ -864,6 +866,18 @@ def _compute_match_detail(url, raw, home_players, away_players,
                 if bk_list:
                     p["bookmaker_odds"] = bk_list
 
+        # Capture the match's best betting-edge pick once, pre-kickoff, for
+        # the Dashboard's profit/loss simulation. Never recomputed after —
+        # see edge_picks table comment in database.py::init_db().
+        if not is_completed and before_season and before_round and not get_edge_pick(url):
+            pick = compute_best_edge_pick(
+                predictions["home"], predictions["away"],
+                home_nickname, away_nickname,
+                before_season, before_round, url,
+            )
+            if pick:
+                save_edge_pick(**pick)
+
     win_prediction = predict_win_probability(
         home_nickname, away_nickname,
         stats.get("home", {}), stats.get("away", {}),
@@ -1093,6 +1107,16 @@ async def get_accuracy(model_version: int = None, season: int = None):
     return get_accuracy_stats(model_version=model_version, season=season)
 
 
+@app.get("/api/dashboard")
+async def get_dashboard():
+    """Overview data for the home dashboard: accuracy stats plus the
+    betting-edge profit/loss simulation."""
+    return {
+        "accuracy": get_accuracy_stats(model_version=None, season=None),
+        "betting": get_betting_summary(),
+    }
+
+
 _TEAM_THEME_MAP = {
     "Broncos": "broncos", "Raiders": "raiders", "Bulldogs": "bulldogs",
     "Sharks": "sharks", "Titans": "titans", "Sea Eagles": "sea-eagles",
@@ -1180,8 +1204,21 @@ async def get_team(name: str, season: int = SEASON):
 
 @app.get("/api/teams")
 async def list_teams():
-    """List all teams."""
-    return get_all_teams()
+    """List all teams, with badge theme + colour for the Team Stats index page."""
+    return [
+        {
+            "name": name,
+            "theme_key": _TEAM_THEME_MAP.get(name, "nrl"),
+            "colour": _theme_to_colour({"key": _TEAM_THEME_MAP.get(name, "nrl")}),
+        }
+        for name in get_all_teams()
+    ]
+
+
+@app.get("/api/players")
+async def list_players():
+    """List every player with their most recent team/position and career totals."""
+    return get_all_players()
 
 
 # Serve frontend

@@ -9,7 +9,7 @@ export default function TeamDetail({ apiBase }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [season, setSeason] = useState(2026)
+  const [season, setSeason] = useState(() => Number(searchParams.get('season')) || 2026)
   const [retryCount, setRetryCount] = useState(0)
   const navigate = useNavigate()
 
@@ -27,7 +27,7 @@ export default function TeamDetail({ apiBase }) {
   if (loading) return <LoadingSpinner text="Loading team data..." />
   if (error) return (
     <div className="error-container">
-      <Link to="/" className="back-link">&larr; Back</Link>
+      <Link to="/teams" className="back-link">&larr; Back</Link>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
@@ -38,7 +38,7 @@ export default function TeamDetail({ apiBase }) {
 
   return (
     <div className="team-detail">
-      <Link to="/" className="back-link">&larr; All Rounds</Link>
+      <Link to="/teams" className="back-link">&larr; All Teams</Link>
 
       <div className="team-detail-header">
         <div className="team-detail-badge-wrap">

@@ -59,7 +59,7 @@ export default function Draw({ apiBase }) {
   if (loading) return (
     <div className="draw">
       <div className="nav-bar sticky">
-        <Link to="/" className="nav-btn">&larr; All Rounds</Link>
+        <Link to="/predictions" className="nav-btn">&larr; All Rounds</Link>
         <h2 className="nav-bar-title">Round {roundNumber}</h2>
       </div>
       <LoadingSpinner text={`Loading Round ${roundNumber} predictions...`} />
@@ -68,7 +68,7 @@ export default function Draw({ apiBase }) {
   if (error) return (
     <div className="error-container">
       <div className="nav-bar sticky">
-        <Link to="/" className="nav-btn">&larr; All Rounds</Link>
+        <Link to="/predictions" className="nav-btn">&larr; All Rounds</Link>
       </div>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
@@ -107,7 +107,7 @@ export default function Draw({ apiBase }) {
   return (
     <div className="draw">
       <div className="nav-bar sticky">
-        <Link to="/" className="nav-btn">&larr; All Rounds</Link>
+        <Link to="/predictions" className="nav-btn">&larr; All Rounds</Link>
         <div className="nav-bar-group">
           <div className="nav-bar-side nav-bar-side-left">
             {prevRound ? (
@@ -157,8 +157,10 @@ export default function Draw({ apiBase }) {
               onClick={() => handleMatchClick(match)}
             >
               <div className="match-meta">
-                <span className="match-date">{formatDate(match.kickoff)}</span>
-                <span className="match-time">{formatTime(match.kickoff)}</span>
+                <span className="match-date">{formatDate(match.kickoff)} &middot; {formatTime(match.kickoff)}</span>
+                <span className={`match-status-badge ${status}`}>
+                  {status === 'live' ? 'Live' : status === 'completed' ? 'Full Time' : 'Upcoming'}
+                </span>
               </div>
               <div className="match-teams">
                 <div className={`team home-team ${homePick ? 'predicted' : ''}`}>

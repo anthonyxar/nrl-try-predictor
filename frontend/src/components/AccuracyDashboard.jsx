@@ -22,7 +22,7 @@ export default function AccuracyDashboard({ apiBase }) {
   if (loading) return <LoadingSpinner text="Loading accuracy data..." />
   if (error) return (
     <div className="error-container">
-      <Link to="/" className="back-link">&larr; Back</Link>
+      <Link to="/" className="back-link">&larr; Dashboard</Link>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
@@ -38,7 +38,7 @@ export default function AccuracyDashboard({ apiBase }) {
   return (
     <div className="accuracy-dashboard">
       <div className="accuracy-header">
-        <Link to="/" className="back-link">&larr; All Rounds</Link>
+        <Link to="/" className="back-link">&larr; Dashboard</Link>
         <h2>Prediction Accuracy</h2>
       </div>
 

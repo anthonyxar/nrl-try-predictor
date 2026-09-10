@@ -34,7 +34,7 @@ export default function Models() {
   return (
     <div className="models-page">
       <div className="models-header">
-        <Link to="/" className="back-link">&larr; All Rounds</Link>
+        <Link to="/predictions" className="back-link">&larr; All Rounds</Link>
         <h2>How the Model Works</h2>
       </div>
 
