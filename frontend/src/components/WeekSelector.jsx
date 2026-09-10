@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import MatchCard from './MatchCard'
+import TeamSelect from './TeamSelect'
 import { fetchJson } from '../api'
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
@@ -53,10 +54,7 @@ export default function WeekSelector({ apiBase }) {
       <div className="list-page-header">
         <h2>{selectedTeam ? `${selectedTeam} — ${selectedYear}` : 'All Rounds'}</h2>
         <div className="predictions-filters">
-          <select className="season-select" value={selectedTeam} onChange={(e) => setSelectedTeam(e.target.value)}>
-            <option value="">All Teams</option>
-            {teams.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
-          </select>
+          <TeamSelect teams={teams} value={selectedTeam} onChange={setSelectedTeam} includeAllOption allLabel="All Teams" />
           <select
             className="season-select"
             value={selectedYear}

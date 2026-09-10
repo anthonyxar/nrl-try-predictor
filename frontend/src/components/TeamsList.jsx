@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
+import TeamSelect from './TeamSelect'
 import { fetchJson } from '../api'
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
@@ -37,9 +38,12 @@ export default function TeamsList({ apiBase }) {
     <div className="teams-list">
       <div className="list-page-header">
         <h2>Team Stats</h2>
-        <select className="season-select" value={season} onChange={(e) => setSeason(Number(e.target.value))}>
-          {SEASONS.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
+        <div className="teams-filters">
+          <TeamSelect teams={teams} value="" onChange={goToTeam} placeholder="Jump to team..." />
+          <select className="season-select" value={season} onChange={(e) => setSeason(Number(e.target.value))}>
+            {SEASONS.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="teams-grid">
