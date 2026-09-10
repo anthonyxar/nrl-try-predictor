@@ -29,7 +29,7 @@ from database import (
     get_player_game_log, get_db,
     upsert_prediction, get_accuracy_stats, get_unrecorded_completed_matches,
     search_players, search_teams, get_all_teams, get_all_players,
-    get_team_roster, get_team_recent_results,
+    get_team_roster, get_team_recent_results, get_team_season_matches,
     get_team_attack_defence, get_home_away_win_rate,
     get_team_tries_conceded_by_edge, get_venue_stats,
     prefetch_round_data,
@@ -454,24 +454,53 @@ async def proxy_image(url: str):
 
 
 
+async def _is_round_drawn(round_number: int):
+    """Cheaply determine whether a round's draw has actually been published
+    yet (vs. NRL echoing the last real round — see _is_undrawn_echo),
+    without running the full prediction pipeline that _refresh_round_cache
+    does — that pipeline is too expensive to run for every round on every
+    home-page load. Prefers the cache; on a miss, fetches just the raw
+    fixtures to check, and caches the draw_not_released placeholder when a
+    round turns out undrawn (cheap, and matches what _refresh_round_cache
+    would store). A round that turns out drawn but wasn't cached is
+    reported here without being cached — the full version is computed the
+    normal way, whenever it's actually visited. Returns (is_drawn, round_title)."""
+    with _round_cache_lock:
+        cached = _round_cache.get(round_number)
+    if cached:
+        resp = cached[0]
+        return (not resp.get("draw_not_released"), resp.get("name"))
+
+    raw = await fetch_round(round_number)
+    if raw is None:
+        return (False, None)
+    fixtures, byes, round_title = parse_fixtures(raw)
+    if await _is_undrawn_echo(fixtures, round_number):
+        response = {
+            "round": round_number, "name": f"Round {round_number}",
+            "matches": [], "byes": [], "draw_not_released": True,
+        }
+        with _round_cache_lock:
+            _round_cache[round_number] = (response, time.time())
+        return (False, None)
+
+    return (True, round_title)
+
+
 @app.get("/api/rounds")
 async def get_rounds():
-    """List all rounds for the round-selector. Uses whatever name is
-    already cached for each round (populated by _refresh_round_cache from
-    NRL's own roundTitle — e.g. "Finals Week 1") so finals weeks show
-    NRL's real label instead of a generic "Round N", and self-corrects as
-    NRL publishes each week's draw. Falls back to "Round N" for anything
-    not yet warmed (e.g. right after a cold start)."""
-    with _round_cache_lock:
-        cached_names = {
-            i: _round_cache[i][0].get("name")
-            for i in range(1, TOTAL_ROUNDS + 1)
-            if i in _round_cache
-        }
-    return {
-        str(i): {"name": cached_names.get(i) or f"Round {i}"}
-        for i in range(1, TOTAL_ROUNDS + 1)
-    }
+    """List rounds for the round-selector, stopping as soon as we reach a
+    round NRL hasn't actually drawn yet. Finals weeks in particular don't
+    appear on NRL's own site until the prior week's results decide who's
+    playing, so they shouldn't show up as a clickable box here either —
+    see _is_round_drawn / _is_undrawn_echo."""
+    result = {}
+    for i in range(1, TOTAL_ROUNDS + 1):
+        drawn, title = await _is_round_drawn(i)
+        if not drawn:
+            break
+        result[str(i)] = {"name": title or f"Round {i}"}
+    return result
 
 
 def _predict_single_fixture(f, round_number):
@@ -668,19 +697,28 @@ _ROUND_CACHE_TTL_LIVE = 120      # 2 min for rounds with upcoming/live matches
 _ROUND_CACHE_TTL_COMPLETED = 1800  # 30 min for fully completed rounds
 
 
-def _is_undrawn_echo(fixtures, round_number):
+async def _is_undrawn_echo(fixtures, round_number):
     """NRL's API doesn't error for a round beyond what's currently drawn —
     it just echoes back the latest available round's fixtures (same
     match_urls). Detect that by comparing against the previous round's
-    cached fixtures, so we don't show finals week 2/3/4 as if they were
-    real, distinct rounds before NRL has actually published their draw."""
+    fixtures, so we don't show finals weeks as if they were real, distinct
+    rounds before NRL has actually published their draw. Prefers the
+    previous round's cache, but fetches it fresh when uncached rather than
+    assuming this round is real — an uncached previous round (cold cache,
+    a fresh deploy, or simply never having been visited) used to let an
+    echoed finals round slip through as if it were genuinely drawn."""
     if round_number <= 1:
         return False
     with _round_cache_lock:
         prev = _round_cache.get(round_number - 1)
-    if not prev:
-        return False  # previous round not cached — can't tell, assume real
-    prev_urls = {m.get("match_url") for m in prev[0].get("matches", []) if m.get("match_url")}
+    if prev:
+        prev_urls = {m.get("match_url") for m in prev[0].get("matches", []) if m.get("match_url")}
+    else:
+        prev_raw = await fetch_round(round_number - 1)
+        if prev_raw is None:
+            return False  # couldn't verify — assume real rather than hide it
+        prev_fixtures, _, _ = parse_fixtures(prev_raw)
+        prev_urls = {m.get("match_url") for m in prev_fixtures if m.get("match_url")}
     new_urls = {f.get("match_url") for f in fixtures if f.get("match_url")}
     return bool(new_urls) and new_urls == prev_urls
 
@@ -693,7 +731,7 @@ async def _refresh_round_cache(round_number):
         if raw is None:
             return None
         fixtures, byes, round_title = parse_fixtures(raw)
-        if _is_undrawn_echo(fixtures, round_number):
+        if await _is_undrawn_echo(fixtures, round_number):
             # Not a real round yet — NRL is just echoing the last drawn
             # round. Cache an empty result (the frontend already shows
             # "No match data available for this round yet" for that) rather
@@ -737,6 +775,26 @@ async def _refresh_round_cache(round_number):
         return response
     finally:
         _round_refreshing.discard(cache_key)
+
+
+async def _get_current_season_team_matches(team_name: str) -> list:
+    """A team's full current-season schedule (played + upcoming), built
+    round-by-round from the same cache/refresh path /api/rounds/{n} uses,
+    so the cards it produces look identical. Prefers the cache; computes
+    (with predictions) whatever rounds aren't cached yet — unlike the
+    passive home-page load, this is a deliberate, user-initiated lookup,
+    so it's fine to accept the one-time cost of warming missing rounds."""
+    matches = []
+    for i in range(1, TOTAL_ROUNDS + 1):
+        with _round_cache_lock:
+            cached = _round_cache.get(i)
+        resp = cached[0] if cached else await _refresh_round_cache(i)
+        if not resp or resp.get("draw_not_released"):
+            continue
+        for m in resp.get("matches", []):
+            if m.get("home_team") == team_name or m.get("away_team") == team_name:
+                matches.append({**m, "round_number": i, "round_name": resp.get("name")})
+    return matches
 
 
 @app.get("/api/rounds/{round_number}")
@@ -1200,6 +1258,41 @@ async def get_team(name: str, season: int = SEASON):
         "recent_results": recent,
         "roster": roster,
     }
+
+
+@app.get("/api/team-schedule")
+async def get_team_schedule(name: str, season: int = SEASON):
+    """A team's games for a season, shaped for the match-card grid used on
+    the round tab — live round-by-round data (with predictions, including
+    upcoming games) for the current season, completed historical matches
+    from the DB for past seasons."""
+    if not name:
+        raise HTTPException(status_code=400, detail="Team name is required")
+
+    if season == SEASON:
+        matches = await _get_current_season_team_matches(name)
+    else:
+        matches = [
+            {
+                "match_id": r["match_url"],
+                "match_url": r["match_url"],
+                "round_number": r["round_number"],
+                "round_name": r["round_title"] or f"Round {r['round_number']}",
+                "match_state": r["match_state"],
+                "home_team": r["home_team"],
+                "away_team": r["away_team"],
+                "home_score": r["home_score"],
+                "away_score": r["away_score"],
+                "venue": r["venue"],
+                "venue_city": r["venue_city"],
+                "kickoff": r["kickoff"],
+                "home_theme_key": _TEAM_THEME_MAP.get(r["home_team"], "nrl"),
+                "away_theme_key": _TEAM_THEME_MAP.get(r["away_team"], "nrl"),
+            }
+            for r in get_team_season_matches(name, season)
+        ]
+
+    return {"team": name, "season": season, "matches": matches}
 
 
 @app.get("/api/teams")

@@ -2379,6 +2379,24 @@ def get_team_recent_results(team_name: str, last_n: int = 10) -> list:
     return results
 
 
+def get_team_season_matches(team_name: str, season: int) -> list:
+    """All of a team's completed matches in a given (past) season, for the
+    Team Stats schedule view. The current season's schedule (which also
+    includes upcoming games) is built from the live round cache instead —
+    see main.py's _get_current_season_team_matches."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT match_url, round_number, round_title, match_state,
+               home_team, away_team, home_score, away_score,
+               venue, venue_city, kickoff
+        FROM matches
+        WHERE season = %s AND (home_team = %s OR away_team = %s)
+        ORDER BY round_number, kickoff
+    """, (season, team_name, team_name)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # --- Persistent response cache ---
 
 def save_cache_entry(key: str, payload_json: str, refreshed_at: float) -> None:

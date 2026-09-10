@@ -3599,10 +3599,16 @@ body {
   color: var(--text-primary);
 }
 
-.players-filters {
+.players-filters,
+.predictions-filters {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+}
+
+.season-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .players-search-input {
