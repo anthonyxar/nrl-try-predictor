@@ -459,17 +459,34 @@ async def _is_round_drawn(round_number: int):
     yet (vs. NRL echoing the last real round — see _is_undrawn_echo),
     without running the full prediction pipeline that _refresh_round_cache
     does — that pipeline is too expensive to run for every round on every
-    home-page load. Prefers the cache; on a miss, fetches just the raw
-    fixtures to check, and caches the draw_not_released placeholder when a
-    round turns out undrawn (cheap, and matches what _refresh_round_cache
-    would store). A round that turns out drawn but wasn't cached is
-    reported here without being cached — the full version is computed the
-    normal way, whenever it's actually visited. Returns (is_drawn, round_title)."""
+    home-page load. A cached draw_not_released verdict is trusted
+    unconditionally (cheap to have gotten right, and re-checking it costs a
+    live fetch for no benefit). A cached "drawn" verdict is only trusted
+    while fresh (same TTL get_round uses) and re-verified once stale —
+    otherwise a round that was wrongly cached as drawn before this
+    undrawn-detection existed (or simply by a persisted cache_store entry
+    surviving a restart, refreshed_at intact) would stay wrong forever,
+    since a cache hit here never used to expire. On a genuine miss, fetches
+    just the raw fixtures to check, and caches the draw_not_released
+    placeholder when a round turns out undrawn (cheap, and matches what
+    _refresh_round_cache would store). A round that turns out drawn but
+    wasn't cached is reported here without being cached — the full version
+    is computed the normal way, whenever it's actually visited.
+    Returns (is_drawn, round_title)."""
     with _round_cache_lock:
         cached = _round_cache.get(round_number)
     if cached:
-        resp = cached[0]
-        return (not resp.get("draw_not_released"), resp.get("name"))
+        resp, cached_at = cached
+        if resp.get("draw_not_released"):
+            return (False, None)
+        has_live = any(
+            (m.get("match_state") or "").lower() not in ("fulltime", "postmatch")
+            for m in resp.get("matches", [])
+        )
+        ttl = _ROUND_CACHE_TTL_LIVE if has_live else _ROUND_CACHE_TTL_COMPLETED
+        if time.time() - cached_at < ttl:
+            return (True, resp.get("name"))
+        # Stale — fall through and re-verify with a fresh fetch below.
 
     raw = await fetch_round(round_number)
     if raw is None:
