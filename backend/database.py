@@ -2268,42 +2268,77 @@ def update_player_headshots(name_to_url: dict):
 
 
 def search_players(query: str, limit: int = 20) -> list:
-    """Search for players by name. Returns one row per player with their most
-    recent team and position, career totals, and latest known headshot URL.
+    """Search for players by name. Returns one row per player: their most
+    recent team, career totals, and latest known headshot URL, plus their
+    *primary* position — the position they've played the most games at
+    (ties broken by whichever was more recent), not just whatever position
+    they happened to play in their single most recent game. A utility/bench
+    player who's spent most of their career at, say, 2nd Row but filled in
+    at Interchange last week should still show as a 2nd Row player here.
+
+    Grouping is done on a normalised name (lowercased, punctuation/whitespace
+    stripped) rather than the literal `players.name` string — NRL's own data
+    isn't internally consistent about apostrophes in some players' surnames
+    (e.g. "Su'A" vs "Su'a", "Papalii" vs "Papali'i", "Sua'ali'i" vs
+    "Suaalii" all appear scraped from different rounds/seasons for the same
+    real player), which without normalising produced separate rows for what
+    looked like the same player shown more than once, each with whatever
+    position happened to attach to that particular name spelling. The
+    displayed name itself still comes from whichever literal spelling was
+    used in that player's most recent game.
     Uses ILIKE for case-insensitive matching."""
     conn = get_db()
     rows = conn.execute("""
-        WITH latest AS (
-            SELECT DISTINCT ON (p.name)
-                   p.name,
-                   p.team,
-                   p.position,
-                   p.jersey_number,
-                   (m.season * 100 + m.round_number) AS latest_round
+        WITH base AS (
+            SELECT p.name, p.position, p.team, p.jersey_number, p.match_id,
+                   lower(regexp_replace(p.name, '[^a-zA-Z0-9]', '', 'g')) AS norm_name,
+                   (m.season * 100 + m.round_number) AS round_key
             FROM players p
             JOIN matches m ON p.match_id = m.id
             WHERE p.name ILIKE %s AND m.match_state = 'FullTime'
-            ORDER BY p.name, m.season DESC, m.round_number DESC
+        ),
+        position_counts AS (
+            SELECT norm_name, position, COUNT(*) AS games_at_position,
+                   MAX(round_key) AS latest_round_at_position
+            FROM base
+            WHERE position IS NOT NULL AND position <> ''
+            GROUP BY norm_name, position
+        ),
+        primary_position AS (
+            SELECT DISTINCT ON (norm_name) norm_name, position AS primary_position
+            FROM position_counts
+            ORDER BY norm_name, games_at_position DESC, latest_round_at_position DESC
+        ),
+        latest AS (
+            SELECT DISTINCT ON (norm_name)
+                   norm_name, name, team, jersey_number, round_key AS latest_round
+            FROM base
+            ORDER BY norm_name, round_key DESC
+        ),
+        totals AS (
+            SELECT norm_name, COUNT(DISTINCT match_id) AS total_games
+            FROM base
+            GROUP BY norm_name
         )
         SELECT l.name,
                l.team,
-               l.position,
+               pp.primary_position AS position,
                l.jersey_number,
                l.latest_round,
-               (SELECT COUNT(DISTINCT p2.match_id)
-                  FROM players p2
-                  JOIN matches m2 ON p2.match_id = m2.id
-                  WHERE p2.name = l.name AND m2.match_state = 'FullTime') AS total_games,
-               (SELECT COUNT(*) FROM tries t WHERE t.player_name = l.name) AS total_tries,
+               COALESCE(tot.total_games, 0) AS total_games,
+               (SELECT COUNT(*) FROM tries t
+                  WHERE lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) = l.norm_name) AS total_tries,
                (SELECT p3.headshot
                   FROM players p3
                   JOIN matches m3 ON p3.match_id = m3.id
-                  WHERE p3.name = l.name
+                  WHERE lower(regexp_replace(p3.name, '[^a-zA-Z0-9]', '', 'g')) = l.norm_name
                     AND p3.headshot IS NOT NULL
                     AND p3.headshot <> ''
                   ORDER BY m3.season DESC, m3.round_number DESC
                   LIMIT 1) AS headshot
         FROM latest l
+        LEFT JOIN primary_position pp ON pp.norm_name = l.norm_name
+        LEFT JOIN totals tot ON tot.norm_name = l.norm_name
         ORDER BY l.latest_round DESC
         LIMIT %s
     """, (f"%{query}%", limit)).fetchall()

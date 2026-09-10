@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
+import TeamSelect from './TeamSelect'
 import { fetchJson } from '../api'
 
 const SORT_FIELDS = {
@@ -13,11 +14,12 @@ const SORT_FIELDS = {
 
 export default function PlayersList({ apiBase }) {
   const [players, setPlayers] = useState([])
+  const [teamOptions, setTeamOptions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [query, setQuery] = useState('')
   const [position, setPosition] = useState('all')
-  const [team, setTeam] = useState('all')
+  const [team, setTeam] = useState('')
   const [sortKey, setSortKey] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
   const [retryCount, setRetryCount] = useState(0)
@@ -33,13 +35,15 @@ export default function PlayersList({ apiBase }) {
     return () => { cancelled = true }
   }, [apiBase, retryCount])
 
+  // Canonical team list (with badge theme/colour) for the team filter —
+  // same source TeamSelect uses on the Team Stats page, so both pickers
+  // look and behave identically.
+  useEffect(() => {
+    fetchJson(`${apiBase}/teams`).then(setTeamOptions).catch(() => {})
+  }, [apiBase])
+
   const positions = useMemo(() => {
     const set = new Set(players.map(p => p.position).filter(Boolean))
-    return Array.from(set).sort()
-  }, [players])
-
-  const teams = useMemo(() => {
-    const set = new Set(players.map(p => p.team).filter(Boolean))
     return Array.from(set).sort()
   }, [players])
 
@@ -56,7 +60,7 @@ export default function PlayersList({ apiBase }) {
     const q = query.trim().toLowerCase()
     const rows = players.filter(p => {
       if (position !== 'all' && p.position !== position) return false
-      if (team !== 'all' && p.team !== team) return false
+      if (team && p.team !== team) return false
       if (q && !p.name.toLowerCase().includes(q)) return false
       return true
     })
@@ -93,10 +97,7 @@ export default function PlayersList({ apiBase }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <select className="season-select" value={team} onChange={(e) => setTeam(e.target.value)}>
-            <option value="all">All Teams</option>
-            {teams.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
+          <TeamSelect teams={teamOptions} value={team} onChange={setTeam} includeAllOption allLabel="All Teams" />
           <select className="season-select" value={position} onChange={(e) => setPosition(e.target.value)}>
             <option value="all">All Positions</option>
             {positions.map(p => <option key={p} value={p}>{p}</option>)}
