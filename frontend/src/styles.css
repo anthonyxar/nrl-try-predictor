@@ -2109,12 +2109,6 @@ body {
     font-size: 1.2rem;
   }
 
-  .game-log-row {
-    grid-template-columns: 45px 25px 70px 20px 70px 50px 30px 1fr;
-    font-size: 0.72rem;
-    gap: 0.25rem;
-  }
-
   .season-stat {
     min-width: 90px;
     font-size: 0.7rem;
@@ -3176,6 +3170,7 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh; /* mobile browsers: excludes the collapsing URL bar so the sidebar doesn't overshoot the visible area */
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -3790,5 +3785,77 @@ body {
   .betting-pick-row .bp-edge,
   .betting-pick-row .bp-status {
     display: none;
+  }
+
+  /* Ladder — 10 columns don't fit a phone; keep #, Team, Wins, Pts and
+     drop the rest (Played/Drawn/Lost/PF/PA/PD) rather than leaving them
+     reachable only via a non-obvious horizontal scroll. */
+  .ladder-table {
+    min-width: 0;
+  }
+
+  .ladder-row {
+    grid-template-columns: 26px 1fr 34px 44px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.78rem;
+  }
+
+  .ladder-row > :nth-child(3),
+  .ladder-row > :nth-child(5),
+  .ladder-row > :nth-child(6),
+  .ladder-row > :nth-child(7),
+  .ladder-row > :nth-child(8),
+  .ladder-row > :nth-child(9) {
+    display: none;
+  }
+
+  .ld-team {
+    font-size: 0.8rem;
+  }
+
+  /* Player Stats table — Position/Team still available via the filters
+     and the player's own page; drop them here so the name isn't
+     squeezed onto two lines and Games/Tries stay visible. */
+  .players-table .roster-row {
+    grid-template-columns: 1fr 52px 48px;
+  }
+
+  .players-table .roster-row > :nth-child(2),
+  .players-table .roster-row > :nth-child(3) {
+    display: none;
+  }
+
+  /* Team squad table — drop Tries, keep #, Player, Position, Games. */
+  .roster-table .roster-row {
+    grid-template-columns: 24px 1fr 72px 40px;
+    font-size: 0.78rem;
+  }
+
+  .roster-table .roster-row > :nth-child(5) {
+    display: none;
+  }
+
+  /* Player game log — 8 columns is too many even at the existing
+     "mobile" widths (they still summed wider than a phone's content
+     area); drop Season and Team, which are the least essential once a
+     player's own page already establishes both. */
+  .game-log-row {
+    grid-template-columns: 24px 18px 1fr 48px 26px 72px;
+    font-size: 0.68rem;
+    gap: 0.2rem;
+  }
+
+  .game-log-row > :nth-child(1),
+  .game-log-row > :nth-child(3) {
+    display: none;
+  }
+
+  .list-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .team-select-dropdown {
+    max-width: calc(100vw - 2rem);
   }
 }
