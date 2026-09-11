@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 export default function PlayerCard({ player, rank, teamColor, actualTries, isCompleted, edgeThreshold }) {
   const [imgFailed, setImgFailed] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const navigate = useNavigate()
 
   const getBarColor = (pct) => {
@@ -23,7 +24,8 @@ export default function PlayerCard({ player, rank, teamColor, actualTries, isCom
     ? actualTries.filter(t => t.player === player.name).length
     : 0
 
-  const handleClick = () => {
+  const goToPlayer = (e) => {
+    e?.stopPropagation()
     const params = new URLSearchParams({ name: player.name })
     if (player.headshot && !imgFailed) params.set('headshot', player.headshot)
     if (teamColor) params.set('color', teamColor)
@@ -32,6 +34,20 @@ export default function PlayerCard({ player, rank, teamColor, actualTries, isCom
 
   const bookmakers = player.bookmaker_odds || []
   const hasBookmakers = bookmakers.length > 0
+  const hasExtraDetail = hasBookmakers || isCompleted
+
+  // On mobile, the odds breakdown used to force each card into its own
+  // horizontally-scrolling strip — tap to expand it inline instead.
+  // There's nothing to expand into on a wide screen (or when there's no
+  // odds/result detail at all), so the row still just navigates there.
+  const handleCardClick = () => {
+    const isMobile = window.matchMedia('(max-width: 640px)').matches
+    if (isMobile && hasExtraDetail) {
+      setExpanded(e => !e)
+    } else {
+      goToPlayer()
+    }
+  }
 
   // Best edge for this player
   const modelProb = player.model_odds ? 1 / player.model_odds : 0
@@ -42,12 +58,12 @@ export default function PlayerCard({ player, rank, teamColor, actualTries, isCom
 
   return (
     <div
-      className={`player-card clickable ${isCompleted ? (didScore ? 'scored' : '') : ''} ${isTopEdge ? 'top-edge' : ''}`}
-      onClick={handleClick}
+      className={`player-card clickable ${isCompleted ? (didScore ? 'scored' : '') : ''} ${isTopEdge ? 'top-edge' : ''} ${expanded ? 'expanded' : ''}`}
+      onClick={handleCardClick}
     >
       <div className="player-card-main">
         {rank && <div className="player-rank">#{rank}</div>}
-        <div className="player-avatar">
+        <div className="player-avatar" onClick={goToPlayer}>
           {player.headshot && !imgFailed ? (
             <img
               className="player-headshot"
@@ -64,7 +80,7 @@ export default function PlayerCard({ player, rank, teamColor, actualTries, isCom
             #{player.number}
           </span>
         </div>
-        <div className="player-info">
+        <div className="player-info" onClick={goToPlayer}>
           <span className="player-name">
             {player.name}
             {player.is_captain && <span className="captain-badge">C</span>}
@@ -84,31 +100,40 @@ export default function PlayerCard({ player, rank, teamColor, actualTries, isCom
           )}
           <span className="player-try-pct">{player.try_percentage}%</span>
         </div>
-        <div className="player-odds-row">
-          {bookmakers.map((bk, i) => {
-            const mProb = player.model_odds ? 1 / player.model_odds : 0
-            const bkProb = 1 / bk.decimal
-            const edge = mProb - bkProb
-            const isValue = edge > 0
-            return (
-              <div key={i} className={`odds-block ${isValue ? 'value' : ''}`}>
-                <span className="odds-block-label">{bk.bookmaker}</span>
-                <span className="odds-block-value">${bk.decimal.toFixed(2)}</span>
-                {player.model_odds && (
-                  <span className={`odds-block-edge ${isValue ? 'positive' : 'negative'}`}>
-                    {isValue ? '+' : ''}{(edge * 100).toFixed(1)}%
-                  </span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-        {isCompleted && (
-          <div className={`actual-result ${didScore ? 'scored' : 'no-try'}`}>
-            {didScore ? (tryCount > 1 ? `${tryCount} TRIES` : 'TRY') : '—'}
-          </div>
+        {hasExtraDetail && (
+          <span className="player-card-chevron" aria-hidden>{expanded ? '▾' : '▸'}</span>
         )}
       </div>
+      {hasExtraDetail && (
+        <div className="player-card-extra">
+          {hasBookmakers && (
+            <div className="player-odds-row">
+              {bookmakers.map((bk, i) => {
+                const mProb = player.model_odds ? 1 / player.model_odds : 0
+                const bkProb = 1 / bk.decimal
+                const edge = mProb - bkProb
+                const isValue = edge > 0
+                return (
+                  <div key={i} className={`odds-block ${isValue ? 'value' : ''}`}>
+                    <span className="odds-block-label">{bk.bookmaker}</span>
+                    <span className="odds-block-value">${bk.decimal.toFixed(2)}</span>
+                    {player.model_odds && (
+                      <span className={`odds-block-edge ${isValue ? 'positive' : 'negative'}`}>
+                        {isValue ? '+' : ''}{(edge * 100).toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {isCompleted && (
+            <div className={`actual-result ${didScore ? 'scored' : 'no-try'}`}>
+              {didScore ? (tryCount > 1 ? `${tryCount} TRIES` : 'TRY') : '—'}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

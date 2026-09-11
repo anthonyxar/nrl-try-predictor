@@ -1076,7 +1076,8 @@ body {
 
 .player-card {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
   background: var(--surface);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
@@ -1216,11 +1217,23 @@ body {
   line-height: 1.2;
 }
 
+.player-card-extra {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+  padding-right: 1rem;
+  flex-shrink: 0;
+}
+
+.player-card-chevron {
+  display: none;
+}
+
 .player-odds-row {
   display: flex;
   align-items: center;
   gap: 0;
-  margin-left: auto;
   flex-shrink: 0;
   overflow-x: auto;
   border: 1px solid #e5e5e5;
@@ -4003,5 +4016,50 @@ body {
 
   .team-select-dropdown {
     max-width: calc(100vw - 2rem);
+  }
+
+  /* Player cards on the match page: each one used to be its own
+     horizontally-scrolling strip so the odds breakdown could fit — tap
+     to expand it below instead, matching the top3-pick pattern. */
+  .player-card {
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: hidden;
+    cursor: pointer;
+  }
+
+  .player-card-main {
+    min-width: 0;
+    flex-wrap: wrap;
+    padding: 0.6rem 0.75rem;
+  }
+
+  .player-card-chevron {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    padding-left: 0.5rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    flex-shrink: 0;
+  }
+
+  .player-card-extra {
+    display: none;
+    margin-left: 0;
+    width: 100%;
+    padding: 0.6rem 0.75rem 0.75rem;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .player-card.expanded .player-card-extra {
+    display: flex;
+  }
+
+  .player-odds-row {
+    overflow-x: visible;
+    flex-wrap: wrap;
   }
 }
