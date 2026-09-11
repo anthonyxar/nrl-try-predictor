@@ -62,6 +62,12 @@ A team's or player's results over a recent window only. Never career-spanning; w
 statement is about all of history, say "career".
 _Avoid_: Recent performance, momentum.
 
+**Squad strength index**:
+How much experience a team's named on-field Squad carries, relative to what that club
+normally fields over the Modelling window. Centred on 1.0. Exists because Form belongs
+to the Squad that generated it, and this week's Squad may not be that one.
+_Avoid_: Team strength (that's Form), squad rating, experience score.
+
 **Edge**:
 Two unrelated meanings, both load-bearing, so always qualify which:
 *Field edge* — the left/right/middle/fullback side of the field a player attacks or

@@ -6,7 +6,7 @@ enhancements to make before 2027 kicks off.
 **Status: plan written, numbers pending.** The metrics and their thresholds are fixed
 here *before* the harness runs, deliberately — so that a result cannot be chosen after
 seeing which one flatters the change. Result tables below are empty and get filled in
-by the backtest harness (§4).
+by the backtest harness (§5).
 
 Vocabulary in this document follows [`CONTEXT.md`](../CONTEXT.md). Related decisions:
 [ADR-0006](adr/0006-parallel-model-versions.md) (parallel model versions),
@@ -28,7 +28,7 @@ Four outputs, weighted by how much they matter:
 | 3 | **Top-3 / multi** | The ranking the site actually shows | ~1,200 picks |
 | 4 | **Win probability** | Predicted winner and score | ~200 matches |
 
-Note the sample sizes; they decide what may be tuned (§4.4). ~6,800 try predictions
+Note the sample sizes; they decide what may be tuned (§5.4). ~6,800 try predictions
 comfortably supports fitting a handful of parameters. ~600 edge picks does not support
 fitting anything — a few longshots landing swings ROI wildly.
 
@@ -173,28 +173,27 @@ Everything joins on `p.name`. NRL's `playerId` is read by the scraper (`scraper.
 and discarded. Verified stable across clubs and seasons (Latrell Mitchell is `502502`
 in both 2018 and 2026) and present back to 2010. Fixed by ADR-0007.
 
-### 2.7 Team form applied to a squad that did not generate it — **out of scope, recorded**
+### 2.7 Team form applied to a squad that did not generate it — **critical**
 
 The loudest wrong signal in the round-27 match was not any player factor. It was team
 form: the Roosters carried *"averaging 29 pts/game (last 5) — elite attack"* and Souths
 *"conceding 26 pts/game — leaky defence"* into a match Souths won **50–20**. Those are
-the top-listed positive factors on every Roosters pick. The model had the Roosters as
-**52.2% favourites**, predicted 26–22.
+the top-listed positive factors on **every Roosters try pick**, and they also drove a
+**52.2% win probability** and a predicted 26–22.
 
 `predict_win_probability` (`model.py:339`) takes team names and team stats only. **It
 never looks at a player.** No per-player multiplier, however well calibrated, can move
 that 52.2% by a single point.
 
-**This is deliberately out of scope for 2027.** The consequence is stated plainly so it
-is not rediscovered as a surprise: after this work ships, a team resting its
-first-graders will still be priced on the form of the squad that did not play. The fix,
-if taken up later, is a single derived *squad strength index* computed from the named
-17, consumed by both the team form factor and win probability.
+The underlying fact is one fact, not two: **the form on record belongs to a squad, and
+this isn't that squad.** It corrupts two consumers — the team attack/defence factor
+inside `generate_predictions`, and the whole of `predict_win_probability` — so it is
+fixed once, at the source, by a squad strength index (§4).
 
-**A second consequence to keep in mind while reading §5:** because per-player is the
-only lever in scope, the experience multiplier will partly absorb team-level error. Its
-fitted values will read slightly high, and should not be interpreted as a pure estimate
-of the effect of inexperience.
+This is the reason §3's per-player multiplier cannot be interpreted in isolation. Before
+this finding was in scope, the multiplier would have silently absorbed team-level error
+and fitted high. With §4 in place, the two effects are separately identifiable, and
+§4.5 sets out the fitting order that keeps them that way.
 
 ---
 
@@ -309,16 +308,102 @@ prices.
 
 ---
 
-## 4. Backtest harness
+## 4. Worked design — the squad strength index
 
-### 4.1 Shape
+Addresses §2.7. One derived quantity, computed once per team per match, consumed in two
+places. The point of making it one quantity is that §2.7 describes one fact about the
+match; two separately-tuned adjustments would be two knobs for one phenomenon.
+
+### 4.1 Definition
+
+**Squad strength index**: how much experience a team's named on-field squad carries,
+relative to what that club normally fields. Computed from the same Career games input
+as §3, aggregated over the players who actually take the field.
+
+Expressed as a ratio centred on 1.0: a club fielding its usual side scores ~1.0, a club
+resting its first-graders scores well below, a club welcoming back a raft of regulars
+scores slightly above.
+
+### 4.2 Why relative to the club, not the league
+
+An absolute experience total would permanently penalise clubs with young lists and
+flatter veteran-heavy ones — but those standing differences are **already priced into
+team form**, which is exactly what the index is meant to correct. The signal wanted here
+is the *deviation*: this week's squad versus the squad that generated the form on
+record.
+
+The reference baseline should be the same rolling window the form itself is drawn from
+(§8), so the index and the form it corrects are measured over the same period.
+
+### 4.3 Positional weighting
+
+An unweighted average of career games across 17 players would let three debutant props
+offset a full-strength spine. Experience is not uniformly valuable by position, and the
+model already holds a view on which positions carry try-scoring weight
+(`POSITION_EDGE_SENSITIVITY`, `model.py:84`).
+
+Start simple — an unweighted index — and test positional weighting as a second variant
+against the harness. Do not assume the weighting helps; measure it. If it does not
+separate from the unweighted version on 2026 log loss, keep the simpler one.
+
+### 4.4 The two consumers
+
+| Consumer | Where | Effect |
+|---|---|---|
+| **Team attack / defence factor** | `generate_predictions` (`model.py:533`) | Scale the attack factor by the attacking team's index and the defence factor by the defending team's — so a weakened squad's players stop inheriting a full-strength side's scoring rate |
+| **Win probability** | `predict_win_probability` (`model.py:339`) | An adjustment term from the two teams' index differential |
+
+**Interface change required.** `predict_win_probability` currently takes team names and
+stats only; it must accept the squads (or a precomputed index). `generate_predictions`
+already has the player lists. Both are called from `main.py`.
+
+Per ADR-0006, this lands in the challenger module, not by branching the champion.
+
+### 4.5 Fitting order — this matters
+
+§3's per-player multiplier and §4's index are both driven by career games, and both
+reduce the predicted output for an inexperienced squad. **Fitted independently on the
+same data, they will double-count.**
+
+Fit in this order:
+
+1. Fit the squad strength index **first**, with the per-player multiplier disabled. Team
+   form is the larger and more clearly-evidenced error (§2.7), so it should claim the
+   variance it genuinely explains.
+2. Fit the per-player multiplier **on the residuals** of a model that already carries
+   the index.
+3. Re-check the index with the multiplier active; if its fitted strength moves
+   materially, the two are still entangled and the bucket boundaries need widening.
+
+Report both fitted curves in §3.4 and §4.6, with a note of which order produced them.
+
+### 4.6 Results — index distribution and effect
+
+_To be filled by the harness._
+
+| Metric | Value |
+|---|---|
+| Index range observed, 2026 | |
+| Matches with index < 0.85 (materially weakened squad) | |
+| 2026 R27 Rabbitohs v Roosters — Roosters index | |
+| Win probability for that match, with index | |
+| Log loss delta from the index alone | |
+
+That round-27 match is the motivating case and should be reported explicitly. A design
+that does not move its 52.2% has not fixed the thing it was built to fix.
+
+---
+
+## 5. Backtest harness
+
+### 5.1 Shape
 
 Walk-forward replay. For each match, call the model with `before_season` /
 `before_round` set to that match's round, so it sees only what it could have seen.
 Every model and database function already accepts these parameters, which is what makes
 this feasible without restructuring the model.
 
-### 4.2 Leakage handling
+### 5.2 Leakage handling
 
 Per §2.3:
 
@@ -327,13 +412,13 @@ Per §2.3:
   only. Measure the size of the leakage before deciding whether to pay for a production
   change.
 
-### 4.3 Evaluation span
+### 5.3 Evaluation span
 
 2026 is the headline benchmark. 2020–2025 runs as a stability check. Pre-2020 is
 excluded from all scoring — see ADR-0007 — and the per-season coverage marker decides
 which seasons have the feature families a given run depends on.
 
-### 4.4 What may be tuned, and against what
+### 5.4 What may be tuned, and against what
 
 | Parameter | Tuned on | Rationale |
 |---|---|---|
@@ -350,7 +435,7 @@ is a veto, never an objective.
 
 ---
 
-## 5. Data layer changes
+## 6. Data layer changes
 
 All specified in [ADR-0007](adr/0007-full-history-retention-rolling-model-window.md).
 Summary of the work:
@@ -360,7 +445,9 @@ Summary of the work:
    payloads.
 2. **Add `player_id`**, backfill via a targeted pass over match-detail endpoints.
 3. **Introduce a `player` dimension table**; rename `players` to `player_appearances`.
-4. **Persist `isOnField`**; count career games from Appearances only.
+4. **Persist `isOnField`**; count career games from Appearances only. Now doubly
+   load-bearing: the squad strength index (§4) is computed over the players who actually
+   took the field, so a wrong `isOnField` corrupts the index as well as the count.
 5. **Reseed to 2010** via the existing API scraper.
 6. **Add a per-season coverage marker** recording which feature families are populated.
 
@@ -373,7 +460,7 @@ Open questions for the reseed to answer:
 
 ---
 
-## 6. Parallel models in 2027
+## 7. Parallel models in 2027
 
 Per [ADR-0006](adr/0006-parallel-model-versions.md):
 
@@ -388,7 +475,7 @@ Per [ADR-0006](adr/0006-parallel-model-versions.md):
 
 ---
 
-## 7. Backlog
+## 8. Backlog
 
 Ordered. Tracking issue: **#2**.
 
@@ -398,7 +485,8 @@ Ordered. Tracking issue: **#2**.
 | #4 | Persist `isOnField` | Career games and every rate denominator are wrong without it | S |
 | #5 | Reseed to 2010 | Complete career history | M |
 | #6 | Backtest harness + leakage fixes | Nothing below can be validated without it | L |
-| #7 | Career-games experience multiplier | The headline enhancement | M |
+| #13 | Squad strength index | Fit **before** #7 — see §4.5 | L |
+| #7 | Career-games experience multiplier | Fit on the residuals of #13 | M |
 | #8 | Log-odds factor combination (ceiling fix) | Restores ranking among top picks | M |
 | #9 | Rolling modelling window | Removes stale-era data from rate estimation | S |
 | #10 | Rebuild calibration on all players | Currently censored and self-referential | M |
@@ -409,9 +497,14 @@ Ordered. Tracking issue: **#2**.
 
 ```
 verify playerId ✅ → provisional fit on unambiguous names → player_id backfill
-   → isOnField → 2010 reseed → harness + leakage fixes → final multiplier fit
+   → isOnField → 2010 reseed → harness + leakage fixes
+   → squad strength index fit → per-player multiplier fit on its residuals
    → log-odds restructure → walk-forward validation → 2027 shadow run
 ```
+
+Note the ordering of the two career-games fits. They are driven by the same input and
+both suppress an inexperienced squad's output, so fitting them independently
+double-counts. §4.5 has the protocol.
 
 The provisional fit runs early and deliberately on dirty data, restricted to players
 with unambiguous names. It answers the one question that determines whether the rest of
@@ -420,11 +513,8 @@ smooth curve?
 
 ---
 
-## 8. Deliberately out of scope
+## 9. Deliberately out of scope
 
-- **Squad-aware team form and win probability** (§2.7). The round-27 Roosters match
-  stays mispriced at the team level after this work. Recorded so it is a known
-  limitation, not a future surprise.
 - **Separate club-tenure factor.** Considered; rejected as heavily correlated with
   career games and likely to double-count it.
 - **Scraping NRL player profile pages** for career totals. Superseded by the API reseed
