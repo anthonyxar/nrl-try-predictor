@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import MatchCard from './MatchCard'
 import TeamSelect from './TeamSelect'
-import { fetchJson } from '../api'
+import { fetchJson, getCurrentSeasonYear } from '../api'
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
 
@@ -11,7 +11,7 @@ export default function WeekSelector({ apiBase }) {
   const [rounds, setRounds] = useState({})
   const [teams, setTeams] = useState([])
   const [selectedTeam, setSelectedTeam] = useState('')
-  const [selectedYear, setSelectedYear] = useState(SEASONS[0])
+  const [selectedYear, setSelectedYear] = useState(getCurrentSeasonYear)
   const [roundOrder, setRoundOrder] = useState('desc')
   const [schedule, setSchedule] = useState(null)
   const [loading, setLoading] = useState(true)

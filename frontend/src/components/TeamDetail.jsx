@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
-import { fetchJson } from '../api'
+import { fetchJson, getCurrentSeasonYear } from '../api'
 
 export default function TeamDetail({ apiBase }) {
   const [searchParams] = useSearchParams()
@@ -9,7 +9,7 @@ export default function TeamDetail({ apiBase }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [season, setSeason] = useState(() => Number(searchParams.get('season')) || 2026)
+  const [season, setSeason] = useState(() => Number(searchParams.get('season')) || getCurrentSeasonYear())
   const [retryCount, setRetryCount] = useState(0)
   const navigate = useNavigate()
 

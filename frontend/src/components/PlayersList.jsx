@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import TeamSelect from './TeamSelect'
-import { fetchJson } from '../api'
+import { fetchJson, getCurrentSeasonYear } from '../api'
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
 
@@ -22,7 +22,7 @@ export default function PlayersList({ apiBase }) {
   const [query, setQuery] = useState('')
   const [position, setPosition] = useState('all')
   const [team, setTeam] = useState('')
-  const [season, setSeason] = useState('')
+  const [season, setSeason] = useState(getCurrentSeasonYear)
   const [sortKey, setSortKey] = useState('name')
   const [sortDir, setSortDir] = useState('asc')
   const [retryCount, setRetryCount] = useState(0)

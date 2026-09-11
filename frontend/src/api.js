@@ -28,3 +28,13 @@ export function fetchJson(url, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     })
     .finally(() => clearTimeout(timeoutId))
 }
+
+// The NRL season kicks off in March — before that, last year's season is
+// still the relevant "current" one for anything that defaults to a year
+// (e.g. in January 2027, filters should still default to 2026).
+const SEASON_START_MONTH = 2 // 0-indexed: March
+
+export function getCurrentSeasonYear() {
+  const now = new Date()
+  return now.getMonth() < SEASON_START_MONTH ? now.getFullYear() - 1 : now.getFullYear()
+}

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import TeamSelect from './TeamSelect'
-import { fetchJson } from '../api'
+import { fetchJson, getCurrentSeasonYear } from '../api'
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
 
@@ -10,7 +10,7 @@ export default function TeamsList({ apiBase }) {
   const [teams, setTeams] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [season, setSeason] = useState(2026)
+  const [season, setSeason] = useState(getCurrentSeasonYear)
   const [retryCount, setRetryCount] = useState(0)
   const [ladder, setLadder] = useState(null)
   const [ladderLoading, setLadderLoading] = useState(true)
