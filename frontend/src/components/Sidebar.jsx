@@ -60,8 +60,29 @@ export default function Sidebar() {
     }
   }, [collapsed])
 
+  // Fully collapsed: nothing but a thin strip with an arrow to bring the
+  // whole sidebar back — not an icon-only rail, so it actually gives
+  // content the space back rather than just hiding the text labels.
+  if (collapsed) {
+    return (
+      <aside className="sidebar collapsed">
+        <button
+          type="button"
+          className="sidebar-expand-btn"
+          onClick={() => setCollapsed(false)}
+          title="Expand sidebar"
+          aria-label="Expand sidebar"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
+      </aside>
+    )
+  }
+
   return (
-    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+    <aside className="sidebar">
       <div className="sidebar-top">
         <span className="sidebar-brand">
           <span className="sidebar-brand-mark">NRL</span>
@@ -69,13 +90,12 @@ export default function Sidebar() {
         </span>
         <button
           type="button"
-          className={`sidebar-pin-btn ${collapsed ? '' : 'pinned'}`}
-          onClick={() => setCollapsed(c => !c)}
-          title={collapsed ? 'Pin sidebar open' : 'Collapse sidebar'}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="sidebar-pin-btn pinned"
+          onClick={() => setCollapsed(true)}
+          title="Collapse sidebar"
+          aria-label="Collapse sidebar"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-               style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 6l-6 6 6 6" />
           </svg>
         </button>

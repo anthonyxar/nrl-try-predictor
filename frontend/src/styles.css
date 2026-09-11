@@ -2114,19 +2114,6 @@ body {
     font-size: 0.7rem;
   }
 
-  .header-top {
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .header-right {
-    width: 100%;
-  }
-
-  .search-bar-wrap {
-    flex: 1;
-  }
-
   .team-stats-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -2192,6 +2179,73 @@ body {
 .search-bar-wrap {
   position: relative;
   width: 260px;
+}
+
+.search-mobile-trigger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.search-mobile-trigger:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-mobile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.search-mobile-overlay-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.search-mobile-overlay-bar .search-input-wrap {
+  flex: 1;
+}
+
+.search-mobile-close {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.search-mobile-results {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0;
+}
+
+.search-mobile-results .search-result {
+  padding: 0.75rem 1rem;
 }
 
 .search-input-wrap {
@@ -3181,7 +3235,26 @@ body {
 }
 
 .sidebar.collapsed {
-  width: 64px;
+  width: 32px;
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-expand-btn {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: 1.2rem;
+  border: none;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.sidebar-expand-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .sidebar-top {
@@ -3207,10 +3280,6 @@ body {
 
 .sidebar-brand-mark {
   color: var(--accent);
-}
-
-.sidebar.collapsed .sidebar-brand-text {
-  display: none;
 }
 
 .sidebar-pin-btn {
@@ -3277,31 +3346,6 @@ body {
 .sidebar-link.active {
   background: var(--accent-soft);
   color: var(--accent);
-}
-
-.sidebar.collapsed .sidebar-link {
-  justify-content: center;
-  padding: 0.6rem;
-}
-
-.sidebar.collapsed .sidebar-link-label {
-  display: none;
-}
-
-@media (max-width: 640px) {
-  .sidebar {
-    width: 64px;
-  }
-
-  .sidebar .sidebar-brand-text,
-  .sidebar .sidebar-link-label {
-    display: none;
-  }
-
-  .sidebar .sidebar-link {
-    justify-content: center;
-    padding: 0.6rem;
-  }
 }
 
 /* ========================================
@@ -3773,6 +3817,32 @@ body {
 }
 
 @media (max-width: 640px) {
+  /* Header — logo/subtitle/full search bar took up too much vertical
+     space on a phone. Collapse to a slim bar with just the search
+     trigger button, right-aligned (placed after the base header/search
+     rules further up the file so it actually wins the cascade — an
+     earlier attempt at this same override lost to those base rules
+     purely on source order). */
+  .header {
+    padding: 0.6rem 1rem;
+  }
+
+  .header-left {
+    display: none;
+  }
+
+  .header-top {
+    justify-content: flex-end;
+  }
+
+  .search-bar-desktop {
+    display: none;
+  }
+
+  .search-mobile-trigger {
+    display: flex;
+  }
+
   .betting-stat-tiles {
     grid-template-columns: repeat(2, 1fr);
   }
