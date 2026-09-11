@@ -149,13 +149,15 @@ export function MobileNavTrigger() {
         // subtree avoids that trap entirely.
         <div className="sidebar-mobile-overlay">
           <div className="sidebar-mobile-overlay-bar">
-            <span className="sidebar-brand">
-              <span className="sidebar-brand-mark">NRL</span>
-              <span className="sidebar-brand-text">Try Predictor</span>
-            </span>
+            {/* Close sits in the same corner the trigger button opened
+                from, not mirrored to the other side — tapping the same
+                spot to dismiss is the expected mobile pattern, and a
+                close affordance on the opposite side went unnoticed. */}
             <button type="button" className="sidebar-mobile-close" onClick={() => setOpen(false)} aria-label="Close menu">
               &times;
             </button>
+            <span className="sidebar-mobile-overlay-title">Menu</span>
+            <span className="sidebar-mobile-overlay-spacer" aria-hidden="true" />
           </div>
           <nav className="sidebar-mobile-nav">
             <NavItems location={location} />

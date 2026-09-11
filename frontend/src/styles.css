@@ -2114,18 +2114,6 @@ body {
     font-size: 0.7rem;
   }
 
-  .team-stats-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .edge-vuln-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .accuracy-cards {
-    grid-template-columns: 1fr;
-  }
-
   .round-accuracy-chart {
     overflow-x: auto;
   }
@@ -3318,6 +3306,22 @@ body {
   cursor: pointer;
 }
 
+.sidebar-mobile-overlay-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+/* Balances the close button's width so the title above is genuinely
+   centered, not just centered within the leftover space. */
+.sidebar-mobile-overlay-spacer {
+  flex-shrink: 0;
+  width: 36px;
+}
+
 .sidebar-mobile-nav {
   flex: 1;
   overflow-y: auto;
@@ -3858,6 +3862,26 @@ body {
 
   .betting-stat-tiles {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* These three overrides used to live in the earlier max-width: 640px
+     block above, but their un-prefixed base rules (repeat(5, 1fr),
+     repeat(4, 1fr), repeat(3, 1fr)) are defined further down the file
+     than that block — same specificity, later source order, so the base
+     rule always won regardless of viewport and these never actually
+     applied on mobile. Moved down here, after every base rule, to fix it
+     for real (same fix already applied to the header/search overrides
+     above). */
+  .team-stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .edge-vuln-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .accuracy-cards {
+    grid-template-columns: 1fr;
   }
 
   .betting-pick-row {
