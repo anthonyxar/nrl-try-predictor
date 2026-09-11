@@ -13,11 +13,22 @@ export default function MatchDetail({ apiBase }) {
   const [retryCount, setRetryCount] = useState(0)
   const [viewMode, setViewMode] = useState('ranked')
   const [activeTab, setActiveTab] = useState('home')
-  const [expandedPick, setExpandedPick] = useState(null)
   const [roundMatches, setRoundMatches] = useState(null)
 
-  const roundMatch = matchUrl ? matchUrl.match(/round-(\d+)/) : null
-  const roundNumber = roundMatch ? roundMatch[1] : null
+  // Finals weeks don't carry a "round-N" segment in their NRL match_url —
+  // they're "finals-week-N" instead (e.g. ".../2026/finals-week-1/..."), so
+  // the regular-season regex alone can't find the round for those matches.
+  // Mirrors backend/main.py's _round_number_from_url. REGULAR_SEASON_ROUNDS
+  // must stay in sync with TOTAL_ROUNDS (nrl_client.py) — see AGENTS.md.
+  const REGULAR_SEASON_ROUNDS = 27
+  const roundNumber = (() => {
+    if (!matchUrl) return null
+    const regular = matchUrl.match(/round-(\d+)/)
+    if (regular) return regular[1]
+    const finals = matchUrl.match(/finals-week-(\d+)/)
+    if (finals) return String(REGULAR_SEASON_ROUNDS + parseInt(finals[1], 10))
+    return null
+  })()
 
   // Fetch match detail
   useEffect(() => {
@@ -27,7 +38,6 @@ export default function MatchDetail({ apiBase }) {
     setError(null)
     setLoading(true)
     setActiveTab('home')
-    setExpandedPick(null)
     window.scrollTo(0, 0)
 
     let cancelled = false
@@ -413,7 +423,7 @@ export default function MatchDetail({ apiBase }) {
         </div>
       )}
 
-      {/* Value Picks — edge-based when bookmaker odds available, otherwise heuristic fallback */}
+      {/* Best Edge — edge-based when bookmaker odds available, otherwise heuristic fallback */}
       {(() => {
         const getEdgePicks = (players, teamName) => {
           if (!players) return []
@@ -449,28 +459,26 @@ export default function MatchDetail({ apiBase }) {
 
         const renderEdgeColumn = (picks, colour, actualSet) => (
           picks.length > 0 && (
-            <div className="value-picks-column">
+            <div className="edge-picks-column">
               <h4 style={{ color: colour }}>{picks[0].team}</h4>
               {picks.map((vp, i) => {
                 const scored = isCompleted && actualSet.has(vp.name)
                 return (
-                  <div key={i} className={`value-pick-card ${isCompleted ? (scored ? 'hit' : 'miss') : ''}`}>
-                    <div className="value-pick-header">
-                      <span className="value-pick-name">{vp.name}</span>
-                      <span className="value-pick-pct">{vp.try_percentage}%</span>
+                  <div key={i} className={`edge-pick-row ${isCompleted ? (scored ? 'hit' : 'miss') : ''}`}>
+                    <div className="edge-pick-main">
+                      <span className="pick-rank">{i + 1}.</span>
+                      <span className="pick-name">{vp.name}</span>
+                      <span className="pick-pos">#{vp.number} {vp.position}</span>
+                      <span className="pick-pct">{vp.try_percentage}%</span>
                       {isCompleted && (
                         <span className={`pick-result ${scored ? 'hit' : 'miss'}`}>
                           {scored ? 'SCORED' : 'NO TRY'}
                         </span>
                       )}
                     </div>
-                    <div className="value-pick-meta">
-                      <span className="value-pick-pos">#{vp.number} {vp.position}</span>
-                      <span className="value-pick-edge positive">+{(vp.bestEdge * 100).toFixed(1)}% edge</span>
-                    </div>
-                    <div className="value-pick-reasons">
-                      <span className="value-reason">Model: ${vp.model_odds.toFixed(2)}</span>
-                      <span className="value-reason">{vp.bestBookmaker}: ${vp.bestDecimal.toFixed(2)}</span>
+                    <div className="edge-pick-odds">
+                      <span>Model ${vp.model_odds.toFixed(2)} vs {vp.bestBookmaker} ${vp.bestDecimal.toFixed(2)}</span>
+                      <span className="edge-pick-badge">+{(vp.bestEdge * 100).toFixed(1)}%</span>
                     </div>
                   </div>
                 )
@@ -481,10 +489,10 @@ export default function MatchDetail({ apiBase }) {
 
         if (hasEdgePicks) {
           return (
-            <div className="value-picks-section">
-              <h3 className="section-title">Value Picks</h3>
-              <p className="value-picks-subtitle">Players where model probability exceeds bookmaker odds — best edge first</p>
-              <div className="value-picks-columns">
+            <div className="edge-picks-section">
+              <h3 className="section-title">Best Edge</h3>
+              <p className="edge-picks-subtitle">Players where model probability beats the best bookmaker price — biggest edge first</p>
+              <div className="edge-picks-columns">
                 {renderEdgeColumn(homeEdgePicks, match.home_colour, actualHome)}
                 {renderEdgeColumn(awayEdgePicks, match.away_colour, actualAway)}
               </div>
@@ -492,125 +500,93 @@ export default function MatchDetail({ apiBase }) {
           )
         }
 
-        // Fallback: old heuristic picks
+        // Fallback: old heuristic picks (no bookmaker odds configured)
+        const renderFallbackColumn = (picks, colour, name) => (
+          picks && picks.length > 0 && (
+            <div className="edge-picks-column">
+              <h4 style={{ color: colour }}>{name}</h4>
+              {picks.map((vp, i) => (
+                <div key={i} className={`edge-pick-row ${isCompleted ? (vp.scored ? 'hit' : 'miss') : ''}`}>
+                  <div className="edge-pick-main">
+                    <span className="pick-rank">{vp.rank}.</span>
+                    <span className="pick-name">{vp.name}</span>
+                    <span className="pick-pos">#{vp.number} {vp.position}</span>
+                    <span className="pick-pct">{vp.try_percentage}%</span>
+                    {isCompleted && (
+                      <span className={`pick-result ${vp.scored ? 'hit' : 'miss'}`}>
+                        {vp.scored ? 'SCORED' : 'NO TRY'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="edge-pick-reasons">
+                    {vp.reasons.map((reason, j) => (
+                      <span key={j} className="edge-pick-reason">{reason}</span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )
+
         return (
-          <div className="value-picks-section">
-            <h3 className="section-title">Value Picks</h3>
-            <p className="value-picks-subtitle">Lower-ranked players with strong form against vulnerable defences</p>
-            <div className="value-picks-columns">
-              {match.value_picks_home && match.value_picks_home.length > 0 && (
-                <div className="value-picks-column">
-                  <h4 style={{ color: match.home_colour }}>{match.home_nickname}</h4>
-                  {match.value_picks_home.map((vp, i) => (
-                    <div key={i} className={`value-pick-card ${isCompleted ? (vp.scored ? 'hit' : 'miss') : ''}`}>
-                      <div className="value-pick-header">
-                        <span className="value-pick-name">{vp.name}</span>
-                        <span className="value-pick-pct">{vp.try_percentage}%</span>
-                        {isCompleted && (
-                          <span className={`pick-result ${vp.scored ? 'hit' : 'miss'}`}>
-                            {vp.scored ? 'SCORED' : 'NO TRY'}
-                          </span>
-                        )}
-                      </div>
-                      <div className="value-pick-meta">
-                        <span className="value-pick-pos">#{vp.number} {vp.position}</span>
-                        <span className="value-pick-rank">Ranked #{vp.rank}</span>
-                      </div>
-                      <div className="value-pick-reasons">
-                        {vp.reasons.map((reason, j) => (
-                          <span key={j} className="value-reason">{reason}</span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {match.value_picks_away && match.value_picks_away.length > 0 && (
-                <div className="value-picks-column">
-                  <h4 style={{ color: match.away_colour }}>{match.away_nickname}</h4>
-                  {match.value_picks_away.map((vp, i) => (
-                    <div key={i} className={`value-pick-card ${isCompleted ? (vp.scored ? 'hit' : 'miss') : ''}`}>
-                      <div className="value-pick-header">
-                        <span className="value-pick-name">{vp.name}</span>
-                        <span className="value-pick-pct">{vp.try_percentage}%</span>
-                        {isCompleted && (
-                          <span className={`pick-result ${vp.scored ? 'hit' : 'miss'}`}>
-                            {vp.scored ? 'SCORED' : 'NO TRY'}
-                          </span>
-                        )}
-                      </div>
-                      <div className="value-pick-meta">
-                        <span className="value-pick-pos">#{vp.number} {vp.position}</span>
-                        <span className="value-pick-rank">Ranked #{vp.rank}</span>
-                      </div>
-                      <div className="value-pick-reasons">
-                        {vp.reasons.map((reason, j) => (
-                          <span key={j} className="value-reason">{reason}</span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+          <div className="edge-picks-section">
+            <h3 className="section-title">Best Edge</h3>
+            <p className="edge-picks-subtitle">No live bookmaker odds available — showing the model's most fancied outsiders instead</p>
+            <div className="edge-picks-columns">
+              {renderFallbackColumn(match.value_picks_home, match.home_colour, match.home_nickname)}
+              {renderFallbackColumn(match.value_picks_away, match.away_colour, match.away_nickname)}
             </div>
           </div>
         )
       })()}
 
-      {/* Top 3 per team */}
-      <div className="top3-section">
-        <h3 className="section-title">Top 3 Try Scorer Picks Per Team</h3>
-        <p className="top3-subtitle">Click a pick to see why the model rated it</p>
-        <div className="top3-columns">
-          {[
-            { side: 'home', picks: match.top3_home, colour: match.home_colour, name: match.home_nickname },
-            { side: 'away', picks: match.top3_away, colour: match.away_colour, name: match.away_nickname },
-          ].map(({ side, picks, colour, name }) => (
-            <div key={side} className="top3-column">
-              <h4 style={{ color: colour }}>{name}</h4>
-              {picks.map((pick, i) => {
-                const pickId = `${side}-${i}`
-                const isOpen = expandedPick === pickId
-                const factors = pick.factors || []
-                const hasFactors = factors.length > 0
-                return (
-                  <div
-                    key={i}
-                    className={`top3-pick ${isCompleted ? (pick.scored ? 'hit' : 'miss') : ''} ${hasFactors ? 'expandable' : ''} ${isOpen ? 'open' : ''}`}
-                    onClick={() => hasFactors && setExpandedPick(isOpen ? null : pickId)}
-                  >
-                    <div className="top3-pick-row">
-                      <span className="pick-rank">{i + 1}.</span>
-                      <span className="pick-name">{pick.name}</span>
-                      <span className="pick-pos">{pick.position}</span>
-                      <span className="pick-pct">{pick.try_percentage}%</span>
-                      {isCompleted && (
-                        <span className={`pick-result ${pick.scored ? 'hit' : 'miss'}`}>
-                          {pick.scored ? 'SCORED' : 'NO TRY'}
-                        </span>
-                      )}
-                      {hasFactors && (
-                        <span className="pick-chevron" aria-hidden>{isOpen ? '▾' : '▸'}</span>
-                      )}
+      {/* Last time these teams met */}
+      {match.h2h_recent_tries && match.h2h_recent_tries.length > 0 && (
+        <div className="h2h-section">
+          <h3 className="section-title">Last Time These Teams Met</h3>
+          <p className="h2h-subtitle">
+            Try scorers from their {match.h2h_recent_tries.length === 1 ? 'previous meeting' : `last ${match.h2h_recent_tries.length} meetings`}
+          </p>
+          {match.h2h_recent_tries.map((game, i) => {
+            const gameHomeColour = game.home_team === match.home_nickname ? match.home_colour : match.away_colour
+            const gameAwayColour = game.home_team === match.home_nickname ? match.away_colour : match.home_colour
+            const homeScorers = game.try_scorers.filter(s => s.team === game.home_team)
+            const awayScorers = game.try_scorers.filter(s => s.team === game.away_team)
+            return (
+              <div key={i} className="h2h-game">
+                <div className="h2h-game-header">
+                  <span className="h2h-game-round">{game.round_title || `Round ${game.round_number}`}, {game.season}</span>
+                  <span className="h2h-game-score">
+                    <span style={{ color: gameHomeColour }}>{game.home_team} {game.home_score}</span>
+                    {' – '}
+                    <span style={{ color: gameAwayColour }}>{game.away_score} {game.away_team}</span>
+                  </span>
+                </div>
+                <div className="scoring-summary h2h-scoring-summary">
+                  <div className="scoring-team">
+                    <h4 style={{ color: gameHomeColour }}>{game.home_team}</h4>
+                    <div className="try-list">
+                      {homeScorers.length > 0 ? homeScorers.map((s, j) => (
+                        <span key={j} className="try-entry">{s.name}{s.tries > 1 && <span className="try-min"> x{s.tries}</span>}</span>
+                      )) : <span className="no-tries">No tries</span>}
                     </div>
-                    {isOpen && hasFactors && (
-                      <div className="pick-factors" onClick={(e) => e.stopPropagation()}>
-                        <div className="pick-factors-title">Why this pick</div>
-                        {factors.map((f, j) => (
-                          <div key={j} className={`pick-factor ${f.impact || 'neutral'}`}>
-                            <span className="pick-factor-label">{f.label}</span>
-                            <span className="pick-factor-detail">{f.detail}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
-                )
-              })}
-            </div>
-          ))}
+                  <div className="scoring-divider" />
+                  <div className="scoring-team">
+                    <h4 style={{ color: gameAwayColour }}>{game.away_team}</h4>
+                    <div className="try-list">
+                      {awayScorers.length > 0 ? awayScorers.map((s, j) => (
+                        <span key={j} className="try-entry">{s.name}{s.tries > 1 && <span className="try-min"> x{s.tries}</span>}</span>
+                      )) : <span className="no-tries">No tries</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
-      </div>
+      )}
 
       {/* Full player list */}
       <div className="team-tabs">

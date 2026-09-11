@@ -1068,6 +1068,47 @@ def get_h2h_record(team_a: str, team_b: str, before_season=None, before_round=No
     return {"team_a_wins": a_wins, "team_b_wins": b_wins, "played": len(rows)}
 
 
+@_cached_query("h2h_recent_tries")
+def get_h2h_recent_tries(team_a: str, team_b: str, before_season=None, before_round=None,
+                          num_matches: int = 2) -> list:
+    """Try scorers from the last `num_matches` completed meetings between two
+    teams (either way around), most recent first — powers the match page's
+    "who scored last time these two played" section."""
+    tf, tp = _temporal_filter("m", before_season, before_round)
+    conn = get_db()
+    matches = conn.execute(f"""
+        SELECT m.id, m.season, m.round_number, m.round_title, m.home_team, m.away_team,
+               m.home_score, m.away_score, m.kickoff, m.venue
+        FROM matches m
+        WHERE ((m.home_team = %s AND m.away_team = %s) OR (m.home_team = %s AND m.away_team = %s))
+          AND m.match_state = 'FullTime' AND m.home_score IS NOT NULL{tf}
+        ORDER BY m.season DESC, m.round_number DESC
+        LIMIT %s
+    """, (team_a, team_b, team_b, team_a, *tp, num_matches)).fetchall()
+
+    results = []
+    for m in matches:
+        try_rows = conn.execute("""
+            SELECT team, player_name, COUNT(*) as tries
+            FROM tries
+            WHERE match_id = %s
+            GROUP BY team, player_name
+            ORDER BY MIN(id)
+        """, (m["id"],)).fetchall()
+        results.append({
+            "season": m["season"], "round_number": m["round_number"], "round_title": m["round_title"],
+            "home_team": m["home_team"], "away_team": m["away_team"],
+            "home_score": m["home_score"], "away_score": m["away_score"],
+            "kickoff": m["kickoff"], "venue": m["venue"],
+            "try_scorers": [
+                {"name": r["player_name"], "team": r["team"], "tries": r["tries"]}
+                for r in try_rows
+            ],
+        })
+    conn.close()
+    return results
+
+
 @_cached_query("home_away_win_rate")
 def get_home_away_win_rate(team_name: str, before_season=None, before_round=None) -> dict:
     """Get a team's home and away win rates."""

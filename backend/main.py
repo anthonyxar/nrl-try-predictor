@@ -32,7 +32,7 @@ from database import (
     search_players, search_teams, get_all_teams, get_all_players,
     get_team_roster, get_team_recent_results, get_team_season_matches,
     get_team_attack_defence, get_home_away_win_rate,
-    get_team_tries_conceded_by_edge, get_venue_stats,
+    get_team_tries_conceded_by_edge, get_venue_stats, get_h2h_recent_tries,
     prefetch_round_data,
     get_player_headshot, update_player_headshots,
     save_cache_entry, load_all_cache_entries,
@@ -129,6 +129,27 @@ def _cache_key_str(round_number: int) -> str:
     return f"round:{round_number}"
 
 
+# Finals weeks don't carry a "round-N" segment in their NRL match_url — they're
+# "finals-week-N" instead (e.g. "/draw/nrl-premiership/2026/finals-week-1/...").
+# Map that onto the same 1..TOTAL_ROUNDS numbering /api/rounds/{n} uses, so
+# code that needs "which round is this match in" (prediction history cutoffs,
+# match-to-match nav) works in finals weeks too, not just the regular season.
+# Must stay in sync with TOTAL_ROUNDS (nrl_client.py) — see AGENTS.md.
+_ROUND_URL_RE = re.compile(r'/round-(\d+)/')
+_FINALS_WEEK_URL_RE = re.compile(r'/finals-week-(\d+)/')
+REGULAR_SEASON_ROUNDS = TOTAL_ROUNDS - 4
+
+
+def _round_number_from_url(match_url: str) -> int | None:
+    m = _ROUND_URL_RE.search(match_url)
+    if m:
+        return int(m.group(1))
+    m = _FINALS_WEEK_URL_RE.search(match_url)
+    if m:
+        return REGULAR_SEASON_ROUNDS + int(m.group(1))
+    return None
+
+
 def _restore_cache_from_db():
     """Load every persisted round response into the in-memory cache at startup."""
     try:
@@ -208,9 +229,8 @@ async def _record_prediction_for_match(match_url: str, model_version: int = 3):
     await asyncio.to_thread(_backfill_player_headshots, home_players, away_players)
 
     season_m = re.search(r'/(\d{4})/', match_url)
-    round_m = re.search(r'/round-(\d+)/', match_url)
     before_season = int(season_m.group(1)) if season_m else None
-    before_round = int(round_m.group(1)) if round_m else None
+    before_round = _round_number_from_url(match_url)
     if not before_season or not before_round:
         return False
 
@@ -924,9 +944,8 @@ def _compute_match_detail(url, raw, home_players, away_players,
     """Heavy sync computation for match detail — runs in a thread."""
 
     season_match = re.search(r'/(\d{4})/', url)
-    round_match = re.search(r'/round-(\d+)/', url)
     before_season = int(season_match.group(1)) if season_match else None
-    before_round = int(round_match.group(1)) if round_match else None
+    before_round = _round_number_from_url(url)
 
     stats = parse_team_stats(raw)
     home_team = raw.get("homeTeam", {})
@@ -1004,6 +1023,9 @@ def _compute_match_detail(url, raw, home_players, away_players,
                                          before_season=before_season, before_round=before_round)
     value_picks_away = find_value_picks(predictions["away"], home_nickname, away_nickname,
                                          before_season=before_season, before_round=before_round)
+
+    h2h_recent_tries = get_h2h_recent_tries(home_nickname, away_nickname,
+                                             before_season=before_season, before_round=before_round)
 
     top3_home = [
         {
@@ -1112,6 +1134,7 @@ def _compute_match_detail(url, raw, home_players, away_players,
         "multi": multi,
         "value_picks_home": value_picks_home,
         "value_picks_away": value_picks_away,
+        "h2h_recent_tries": h2h_recent_tries,
         "home_summary": home_summary,
         "away_summary": away_summary,
         "db_status": {

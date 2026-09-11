@@ -716,11 +716,6 @@ body {
   font-style: italic;
 }
 
-/* Top 3 Picks */
-.top3-section {
-  margin-bottom: 1.5rem;
-}
-
 .section-title {
   font-size: 1rem;
   font-weight: 700;
@@ -728,12 +723,23 @@ body {
   color: #1a1a1a;
 }
 
-.top3-columns {
+/* Best Edge */
+.edge-picks-section {
+  margin-bottom: 1.5rem;
+}
+
+.edge-picks-subtitle {
+  font-size: 0.75rem;
+  color: #777777;
+  margin: -0.25rem 0 0.75rem 0;
+}
+
+.edge-picks-columns {
   display: flex;
   gap: 1rem;
 }
 
-.top3-column {
+.edge-picks-column {
   flex: 1;
   background: var(--surface);
   border: 1px solid transparent;
@@ -742,115 +748,125 @@ body {
   padding: 1rem;
 }
 
-.top3-column h4 {
+.edge-picks-column h4 {
   font-size: 0.85rem;
   font-weight: 700;
   margin-bottom: 0.75rem;
 }
 
-.top3-subtitle {
-  font-size: 0.75rem;
-  color: #777777;
-  margin: -0.25rem 0 0.75rem 0;
-}
-
-.top3-pick {
+.edge-pick-row {
   padding: 0.5rem 0;
   border-bottom: 1px solid #e5e5e5;
   font-size: 0.85rem;
 }
 
-.top3-pick-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.top3-pick:last-child {
+.edge-pick-row:last-child {
   border-bottom: none;
 }
 
-.top3-pick.expandable {
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.top3-pick.expandable:hover {
-  background: #f5f5f5;
-  border-radius: 6px;
-}
-
-.top3-pick.open {
-  background: #f8fafc;
-  border-radius: 6px;
-}
-
-.top3-pick.hit {
+.edge-pick-row.hit {
   background: rgba(34, 197, 94, 0.08);
   border-radius: 6px;
   padding: 0.5rem;
   margin: 0 -0.5rem;
 }
 
-.top3-pick.miss {
+.edge-pick-row.miss {
   opacity: 0.7;
 }
 
-.pick-chevron {
-  color: #999999;
-  font-size: 0.75rem;
-  margin-left: 0.25rem;
-}
-
-.pick-factors {
-  margin-top: 0.5rem;
-  padding: 0.75rem;
-  background: #ffffff;
-  border: 1px solid #e5e5e5;
-  border-radius: 6px;
+.edge-pick-main {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 0.5rem;
 }
 
-.pick-factors-title {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.edge-pick-odds {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.5rem;
+  margin-top: 0.3rem;
+  padding-left: 1.5rem;
+  font-size: 0.72rem;
   color: #777777;
-  margin-bottom: 0.25rem;
 }
 
-.pick-factor {
+.edge-pick-badge {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 0.72rem;
+  color: #16a34a;
+  background: #dcfce7;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+
+.edge-pick-reasons {
   display: flex;
   flex-direction: column;
-  gap: 0.125rem;
-  padding: 0.5rem 0.625rem;
-  border-left: 3px solid #cbd5e1;
-  background: #f8fafc;
-  border-radius: 0 4px 4px 0;
+  gap: 0.2rem;
+  margin-top: 0.3rem;
+  padding-left: 1.5rem;
 }
 
-.pick-factor.positive {
-  border-left-color: #22c55e;
-  background: rgba(34, 197, 94, 0.06);
-}
-
-.pick-factor.negative {
-  border-left-color: #ef4444;
-  background: rgba(239, 68, 68, 0.06);
-}
-
-.pick-factor-label {
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: #1a1a1a;
-}
-
-.pick-factor-detail {
+.edge-pick-reason {
   font-size: 0.72rem;
   color: #555555;
+  position: relative;
+  padding-left: 0.65rem;
+}
+
+.edge-pick-reason::before {
+  content: "\2022";
+  position: absolute;
+  left: 0;
+  color: #999999;
+}
+
+/* Last time these teams met */
+.h2h-section {
+  margin-bottom: 1.5rem;
+}
+
+.h2h-subtitle {
+  font-size: 0.75rem;
+  color: #777777;
+  margin: -0.25rem 0 0.75rem 0;
+}
+
+.h2h-game {
+  margin-bottom: 1rem;
+}
+
+.h2h-game:last-child {
+  margin-bottom: 0;
+}
+
+.h2h-game-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.5rem;
+  margin-bottom: 0.5rem;
+  padding: 0 0.25rem;
+}
+
+.h2h-game-round {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #777777;
+}
+
+.h2h-game-score {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.h2h-scoring-summary {
+  margin-bottom: 0;
 }
 
 .pick-rank {
@@ -1620,121 +1636,6 @@ body {
   color: #16a34a;
 }
 
-/* Value Picks */
-.value-picks-section {
-  margin-bottom: 1.25rem;
-}
-
-.value-picks-subtitle {
-  font-size: 0.8rem;
-  color: #777777;
-  margin-bottom: 0.75rem;
-}
-
-.value-picks-columns {
-  display: flex;
-  gap: 1rem;
-}
-
-.value-picks-column {
-  flex: 1;
-  background: #ffffff;
-  border: 1px solid #f59e0b40;
-  border-radius: 12px;
-  padding: 1rem;
-}
-
-.value-picks-column h4 {
-  font-size: 0.85rem;
-  font-weight: 700;
-  margin-bottom: 0.75rem;
-}
-
-.value-pick-card {
-  padding: 0.75rem;
-  border: 1px solid #e5e5e5;
-  border-left: 3px solid #f59e0b;
-  border-radius: 8px;
-  margin-bottom: 0.5rem;
-}
-
-.value-pick-card:last-child {
-  margin-bottom: 0;
-}
-
-.value-pick-card.hit {
-  background: rgba(34, 197, 94, 0.08);
-  border-left-color: #22c55e;
-}
-
-.value-pick-card.miss {
-  opacity: 0.7;
-}
-
-.value-pick-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.35rem;
-}
-
-.value-pick-name {
-  font-weight: 700;
-  font-size: 0.9rem;
-  flex: 1;
-  color: #1a1a1a;
-}
-
-.value-pick-pct {
-  font-weight: 800;
-  font-size: 0.9rem;
-  color: #d97706;
-}
-
-.value-pick-meta {
-  display: flex;
-  gap: 0.75rem;
-  font-size: 0.75rem;
-  color: #777777;
-  margin-bottom: 0.5rem;
-}
-
-.value-pick-rank {
-  font-weight: 600;
-}
-
-.value-pick-edge {
-  font-weight: 700;
-  font-size: 0.75rem;
-  border-radius: 4px;
-  padding: 0.1rem 0.4rem;
-}
-
-.value-pick-edge.positive {
-  color: #16a34a;
-  background: #dcfce7;
-}
-
-.value-pick-reasons {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.value-reason {
-  font-size: 0.75rem;
-  color: #555555;
-  padding-left: 0.75rem;
-  position: relative;
-}
-
-.value-reason::before {
-  content: "\2022";
-  position: absolute;
-  left: 0;
-  color: #d97706;
-}
-
 /* Player Detail */
 .player-detail {
   max-width: 900px;
@@ -2089,7 +1990,7 @@ body {
     flex-direction: column;
   }
 
-  .top3-columns {
+  .edge-picks-columns {
     flex-direction: column;
   }
 
@@ -2124,9 +2025,6 @@ body {
     padding: 0.75rem 1rem;
   }
 
-  .value-picks-columns {
-    flex-direction: column;
-  }
 
   .player-stats-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -4020,7 +3918,7 @@ body {
 
   /* Player cards on the match page: each one used to be its own
      horizontally-scrolling strip so the odds breakdown could fit — tap
-     to expand it below instead, matching the top3-pick pattern. */
+     to expand it below instead. */
   .player-card {
     flex-direction: column;
     align-items: stretch;
