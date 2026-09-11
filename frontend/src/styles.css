@@ -75,12 +75,6 @@ body {
   color: var(--accent);
 }
 
-.subtitle {
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  margin-top: 0.2rem;
-}
-
 /* Main */
 .main {
   width: 100%;
@@ -114,19 +108,6 @@ body {
 .home-hero {
   text-align: center;
   padding: 2.5rem 1rem 3rem;
-}
-
-.home-hero-eyebrow {
-  display: inline-block;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent);
-  background: var(--accent-soft);
-  padding: 0.35rem 0.85rem;
-  border-radius: var(--radius-pill);
-  margin-bottom: 1rem;
 }
 
 .home-hero h1 {
@@ -3755,12 +3736,12 @@ body {
 }
 
 @media (max-width: 640px) {
-  /* Header — logo/subtitle/full search bar took up too much vertical
-     space on a phone. Collapse to a slim bar: nav trigger on the left,
-     search trigger on the right, mirrored via header-top's existing
-     space-between (placed after the base header/search rules further up
-     the file so it actually wins the cascade — an earlier attempt at
-     this same override lost to those base rules purely on source order). */
+  /* Header — logo/full search bar took up too much vertical space on a
+     phone. Collapse to a slim bar: nav trigger on the left, search trigger
+     on the right, mirrored via header-top's existing space-between (placed
+     after the base header/search rules further up the file so it actually
+     wins the cascade — an earlier attempt at this same override lost to
+     those base rules purely on source order). */
   .header {
     padding: 0.6rem 1rem;
   }
@@ -3770,8 +3751,7 @@ body {
     align-items: center;
   }
 
-  .header-left .logo,
-  .header-left .subtitle {
+  .header-left .logo {
     display: none;
   }
 

@@ -29,7 +29,6 @@ export default function App() {
                     <span className="logo-nrl">NRL</span> Try Predictor
                   </Link>
                 </h1>
-                <p className="subtitle">Live player try-scoring probabilities for the 2026 season</p>
               </div>
               {/* Mobile-only: centred title shown once the nav trigger and
                   search trigger have their own slim slots either side.

@@ -131,7 +131,6 @@ export default function WeekSelector({ apiBase }) {
 function Hero() {
   return (
     <div className="home-hero">
-      <span className="home-hero-eyebrow">2026 NRL Season</span>
       <h1>Know who's <span className="accent">scoring tries</span> before kickoff</h1>
       <p>Player try-scoring probabilities, win predictions and value picks for every match, built from years of NRL data.</p>
     </div>
