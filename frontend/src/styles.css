@@ -1994,8 +1994,32 @@ body {
     padding: 0.4rem 0.5rem;
   }
 
+  /* position: sticky (pinned some fixed distance below the header) fought
+     the header's own height changing across breakpoints/redesigns — the
+     offset needed constant re-tuning and kept drifting out of sync,
+     leaving the bar floating with a gap or overlapping content. Docking
+     it to the bottom of the viewport instead sidesteps that entirely: no
+     offset to keep in sync with the header at all. .draw/.match-detail
+     get matching bottom padding below so it doesn't cover the last item. */
   .nav-bar.sticky {
-    top: 7.5rem;
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin-bottom: 0;
+    border-radius: 0;
+    box-shadow: 0 -4px 16px rgba(20, 23, 28, 0.12);
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    z-index: 300;
+  }
+
+  .draw,
+  .match-detail {
+    /* Generous on purpose — the bar wraps to two rows (back button, then
+       prev/next) on narrow phones, plus env(safe-area-inset-bottom) on
+       notched devices, and this only needs to clear it, not hug it. */
+    padding-bottom: 7rem;
   }
 
   /* On mobile, undo absolute positioning so it stacks normally */
