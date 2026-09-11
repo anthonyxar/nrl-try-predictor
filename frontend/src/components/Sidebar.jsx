@@ -79,31 +79,12 @@ export default function Sidebar() {
     }
   }, [collapsed])
 
-  // Fully collapsed: nothing but a thin strip with an arrow to bring the
-  // whole sidebar back — not an icon-only rail, so it actually gives
-  // content the space back rather than just hiding the text labels.
+  // Collapsed: an icon-only rail, not an empty strip — the nav icons stay
+  // clickable so collapsing doesn't cost people the ability to navigate.
   // Desktop/tablet only — hidden below 640px in favour of the top-docked
   // mobile nav (MobileNavTrigger) so it stops eating screen width on phones.
-  if (collapsed) {
-    return (
-      <aside className="sidebar sidebar-desktop collapsed">
-        <button
-          type="button"
-          className="sidebar-expand-btn"
-          onClick={() => setCollapsed(false)}
-          title="Expand sidebar"
-          aria-label="Expand sidebar"
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 6l6 6-6 6" />
-          </svg>
-        </button>
-      </aside>
-    )
-  }
-
   return (
-    <aside className="sidebar sidebar-desktop">
+    <aside className={`sidebar sidebar-desktop ${collapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-top">
         <span className="sidebar-brand">
           <span className="sidebar-brand-mark">NRL</span>
@@ -111,12 +92,15 @@ export default function Sidebar() {
         </span>
         <button
           type="button"
-          className="sidebar-pin-btn pinned"
-          onClick={() => setCollapsed(true)}
-          title="Collapse sidebar"
-          aria-label="Collapse sidebar"
+          className={`sidebar-pin-btn ${collapsed ? '' : 'pinned'}`}
+          onClick={() => setCollapsed(c => !c)}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transform: collapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}
+          >
             <path d="M15 6l-6 6 6 6" />
           </svg>
         </button>
