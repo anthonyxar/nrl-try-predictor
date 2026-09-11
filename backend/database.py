@@ -2549,6 +2549,39 @@ def get_team_recent_results(team_name: str, last_n: int = 10) -> list:
     return results
 
 
+def get_season_rounds(season: int) -> list:
+    """Distinct rounds played in a given (past) season, for the round-selector
+    grid on the Predictions tab. The current season's round list comes from
+    the live round-drawn check in main.py instead — see get_rounds()."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT round_number, MAX(round_title) AS round_title
+        FROM matches
+        WHERE season = %s
+        GROUP BY round_number
+        ORDER BY round_number
+    """, (season,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_season_round_matches(season: int, round_number: int) -> list:
+    """All matches (both teams) played in a given (past) season + round, for
+    the round-detail grid on the Predictions tab when browsing a past year —
+    see get_team_season_matches for the equivalent per-team query."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT match_url, round_number, round_title, match_state,
+               home_team, away_team, home_score, away_score,
+               venue, venue_city, kickoff
+        FROM matches
+        WHERE season = %s AND round_number = %s
+        ORDER BY kickoff
+    """, (season, round_number)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_team_season_matches(team_name: str, season: int) -> list:
     """All of a team's completed matches in a given (past) season, for the
     Team Stats schedule view. The current season's schedule (which also

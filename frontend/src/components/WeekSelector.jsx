@@ -1,17 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import MatchCard from './MatchCard'
 import TeamSelect from './TeamSelect'
 import { fetchJson, getCurrentSeasonYear } from '../api'
 
 const SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
+const CURRENT_SEASON = getCurrentSeasonYear()
 
 export default function WeekSelector({ apiBase }) {
+  const [searchParams] = useSearchParams()
   const [rounds, setRounds] = useState({})
   const [teams, setTeams] = useState([])
   const [selectedTeam, setSelectedTeam] = useState('')
-  const [selectedYear, setSelectedYear] = useState(getCurrentSeasonYear)
+  const [selectedYear, setSelectedYear] = useState(() => {
+    const fromUrl = Number(searchParams.get('season'))
+    return SEASONS.includes(fromUrl) ? fromUrl : CURRENT_SEASON
+  })
   const [roundOrder, setRoundOrder] = useState('desc')
   const [schedule, setSchedule] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -35,7 +40,7 @@ export default function WeekSelector({ apiBase }) {
         .then(data => { if (!cancelled) { setSchedule(data); setLoading(false) } })
         .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
     } else {
-      fetchJson(`${apiBase}/rounds`)
+      fetchJson(`${apiBase}/rounds?season=${selectedYear}`)
         .then(data => { if (!cancelled) { setRounds(data); setLoading(false) } })
         .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
     }
@@ -59,15 +64,14 @@ export default function WeekSelector({ apiBase }) {
       <Hero />
 
       <div className="list-page-header">
-        <h2>{selectedTeam ? `${selectedTeam} — ${selectedYear}` : 'All Rounds'}</h2>
+        <h2>{selectedTeam ? `${selectedTeam} — ${selectedYear}` : selectedYear === CURRENT_SEASON ? 'All Rounds' : `All Rounds — ${selectedYear}`}</h2>
         <div className="predictions-filters">
           <TeamSelect teams={teams} value={selectedTeam} onChange={setSelectedTeam} includeAllOption allLabel="All Teams" />
           <select
             className="season-select"
             value={selectedYear}
             onChange={(e) => setSelectedYear(Number(e.target.value))}
-            disabled={!selectedTeam}
-            title={selectedTeam ? 'Season' : 'Pick a team to browse a past season'}
+            title="Season"
           >
             {SEASONS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
@@ -112,17 +116,21 @@ export default function WeekSelector({ apiBase }) {
       )}
 
       {!loading && !error && !selectedTeam && (
-        <div className="rounds-grid">
-          {sortedRoundEntries.map(([num, info]) => (
-            <button
-              key={num}
-              className="round-card"
-              onClick={() => navigate(`/round/${num}`)}
-            >
-              <span className="round-number">{info.name || `Round ${num}`}</span>
-            </button>
-          ))}
-        </div>
+        sortedRoundEntries.length > 0 ? (
+          <div className="rounds-grid">
+            {sortedRoundEntries.map(([num, info]) => (
+              <button
+                key={num}
+                className="round-card"
+                onClick={() => navigate(`/round/${num}?season=${selectedYear}`)}
+              >
+                <span className="round-number">{info.name || `Round ${num}`}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="error-message">No rounds found for {selectedYear}.</div>
+        )
       )}
     </div>
   )

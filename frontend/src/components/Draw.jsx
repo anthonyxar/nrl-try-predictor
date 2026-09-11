@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import MatchCard from './MatchCard'
-import { fetchJson } from '../api'
+import { fetchJson, getCurrentSeasonYear } from '../api'
 
 // 27 regular-season rounds + 4 finals weeks — must match backend/nrl_client.py's TOTAL_ROUNDS
 const TOTAL_ROUNDS = 31
 
 export default function Draw({ apiBase }) {
   const { roundNumber } = useParams()
+  const [searchParams] = useSearchParams()
+  const season = Number(searchParams.get('season')) || getCurrentSeasonYear()
+  const seasonQuery = `season=${season}`
   const [roundData, setRoundData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -22,25 +25,27 @@ export default function Draw({ apiBase }) {
     window.scrollTo(0, 0)
 
     let cancelled = false
-    fetchJson(`${apiBase}/rounds/${roundNumber}`)
+    fetchJson(`${apiBase}/rounds/${roundNumber}?${seasonQuery}`)
       .then(data => {
         if (cancelled) return
         setRoundData(data)
         setLoading(false)
         // Prefetch adjacent rounds in background
         const rn = parseInt(roundNumber)
-        if (rn > 1) fetchJson(`${apiBase}/rounds/${rn - 1}`).catch(() => {})
-        if (rn < TOTAL_ROUNDS) fetchJson(`${apiBase}/rounds/${rn + 1}`).catch(() => {})
+        if (rn > 1) fetchJson(`${apiBase}/rounds/${rn - 1}?${seasonQuery}`).catch(() => {})
+        if (rn < TOTAL_ROUNDS) fetchJson(`${apiBase}/rounds/${rn + 1}?${seasonQuery}`).catch(() => {})
       })
       .catch(e => { if (!cancelled) { setError(e.message); setLoading(false) } })
 
     return () => { cancelled = true }
-  }, [apiBase, roundNumber, retryCount])
+  }, [apiBase, roundNumber, season, retryCount])
+
+  const allRoundsLink = `/predictions?${seasonQuery}`
 
   if (loading) return (
     <div className="draw">
       <div className="nav-bar sticky">
-        <Link to="/predictions" className="nav-btn">&larr; All Rounds</Link>
+        <Link to={allRoundsLink} className="nav-btn">&larr; All Rounds</Link>
         <h2 className="nav-bar-title">Round {roundNumber}</h2>
       </div>
       <LoadingSpinner text={`Loading Round ${roundNumber} predictions...`} />
@@ -49,7 +54,7 @@ export default function Draw({ apiBase }) {
   if (error) return (
     <div className="error-container">
       <div className="nav-bar sticky">
-        <Link to="/predictions" className="nav-btn">&larr; All Rounds</Link>
+        <Link to={allRoundsLink} className="nav-btn">&larr; All Rounds</Link>
       </div>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
@@ -69,11 +74,11 @@ export default function Draw({ apiBase }) {
   return (
     <div className="draw">
       <div className="nav-bar sticky">
-        <Link to="/predictions" className="nav-btn">&larr; All Rounds</Link>
+        <Link to={allRoundsLink} className="nav-btn">&larr; All Rounds</Link>
         <div className="nav-bar-group">
           <div className="nav-bar-side nav-bar-side-left">
             {prevRound ? (
-              <Link to={`/round/${prevRound}`} className="nav-btn" aria-label={`Previous round (Round ${prevRound})`}>
+              <Link to={`/round/${prevRound}?${seasonQuery}`} className="nav-btn" aria-label={`Previous round (Round ${prevRound})`}>
                 &larr; R{prevRound}
               </Link>
             ) : (
@@ -83,7 +88,7 @@ export default function Draw({ apiBase }) {
           <h2 className="nav-bar-title">{roundData.name}</h2>
           <div className="nav-bar-side nav-bar-side-right">
             {nextRound ? (
-              <Link to={`/round/${nextRound}`} className="nav-btn" aria-label={`Next round (Round ${nextRound})`}>
+              <Link to={`/round/${nextRound}?${seasonQuery}`} className="nav-btn" aria-label={`Next round (Round ${nextRound})`}>
                 R{nextRound} &rarr;
               </Link>
             ) : (

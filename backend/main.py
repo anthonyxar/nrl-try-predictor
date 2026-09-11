@@ -30,7 +30,8 @@ from database import (
     get_player_game_log, get_db,
     upsert_prediction, get_accuracy_stats, get_unrecorded_completed_matches,
     search_players, search_teams, get_all_teams, get_all_players,
-    get_team_roster, get_team_recent_results, get_team_season_matches,
+    get_team_roster, get_team_recent_results, get_team_season_matches, get_season_rounds,
+    get_season_round_matches,
     get_team_attack_defence, get_home_away_win_rate,
     get_team_tries_conceded_by_edge, get_venue_stats, get_h2h_recent_tries,
     prefetch_round_data,
@@ -552,12 +553,19 @@ async def _is_round_drawn(round_number: int):
 
 
 @app.get("/api/rounds")
-async def get_rounds():
-    """List rounds for the round-selector, stopping as soon as we reach a
-    round NRL hasn't actually drawn yet. Finals weeks in particular don't
-    appear on NRL's own site until the prior week's results decide who's
-    playing, so they shouldn't show up as a clickable box here either —
-    see _is_round_drawn / _is_undrawn_echo."""
+async def get_rounds(season: int = SEASON):
+    """List rounds for the round-selector. For the current season, stops as
+    soon as we reach a round NRL hasn't actually drawn yet — finals weeks in
+    particular don't appear on NRL's own site until the prior week's results
+    decide who's playing, so they shouldn't show up as a clickable box here
+    either, see _is_round_drawn / _is_undrawn_echo. Past seasons are fully
+    played out already, so they're listed straight from the DB instead."""
+    if season != SEASON:
+        return {
+            str(r["round_number"]): {"name": r["round_title"] or f"Round {r['round_number']}"}
+            for r in get_season_rounds(season)
+        }
+
     result = {}
     for i in range(1, TOTAL_ROUNDS + 1):
         drawn, title = await _is_round_drawn(i)
@@ -862,11 +870,41 @@ async def _get_current_season_team_matches(team_name: str) -> list:
 
 
 @app.get("/api/rounds/{round_number}")
-async def get_round(round_number: int, version: int = 3):
+async def get_round(round_number: int, version: int = 3, season: int = SEASON):
     # `version` is accepted for backward compatibility with old links but
     # ignored — the app only runs the V3 model now.
     if round_number < 1 or round_number > TOTAL_ROUNDS:
         raise HTTPException(status_code=404, detail="Invalid round number")
+
+    if season != SEASON:
+        # Past seasons are fully played out — no live fetch or predictions,
+        # just the completed matches straight from the DB (same shape
+        # get_team_schedule already uses for a team's past-season games).
+        rows = get_season_round_matches(season, round_number)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Round not found for this season")
+        return {
+            "round": round_number,
+            "name": rows[0]["round_title"] or f"Round {round_number}",
+            "matches": [
+                {
+                    "match_id": r["match_url"],
+                    "match_url": r["match_url"],
+                    "match_state": r["match_state"],
+                    "home_team": r["home_team"],
+                    "away_team": r["away_team"],
+                    "home_score": r["home_score"],
+                    "away_score": r["away_score"],
+                    "venue": r["venue"],
+                    "venue_city": r["venue_city"],
+                    "kickoff": r["kickoff"],
+                    "home_theme_key": _TEAM_THEME_MAP.get(r["home_team"], "nrl"),
+                    "away_theme_key": _TEAM_THEME_MAP.get(r["away_team"], "nrl"),
+                }
+                for r in rows
+            ],
+            "byes": [],
+        }
 
     cache_key = round_number
     now = time.time()

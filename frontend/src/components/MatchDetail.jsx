@@ -30,6 +30,17 @@ export default function MatchDetail({ apiBase }) {
     return null
   })()
 
+  // The match's own season, so a past-season match's round nav doesn't land
+  // on the current season's round N (mirrors backend/main.py's season_m regex).
+  const matchSeason = (() => {
+    if (!matchUrl) return null
+    const m = matchUrl.match(/\/(\d{4})\//)
+    return m ? m[1] : null
+  })()
+  const roundLink = roundNumber
+    ? `/round/${roundNumber}${matchSeason ? `?season=${matchSeason}` : ''}`
+    : '/predictions'
+
   // Fetch match detail
   useEffect(() => {
     if (!matchUrl) { setError('No match URL provided'); setLoading(false); return }
@@ -58,10 +69,11 @@ export default function MatchDetail({ apiBase }) {
   // Fetch round matches for prev/next navigation
   useEffect(() => {
     if (!roundNumber) return
-    fetchJson(`${apiBase}/rounds/${roundNumber}`)
+    const seasonQuery = matchSeason ? `?season=${matchSeason}` : ''
+    fetchJson(`${apiBase}/rounds/${roundNumber}${seasonQuery}`)
       .then(data => { if (data?.matches) setRoundMatches(data.matches) })
       .catch(() => {})
-  }, [apiBase, roundNumber])
+  }, [apiBase, roundNumber, matchSeason])
 
   // Build prev/next match links
   const currentMatchIndex = roundMatches && matchUrl
@@ -79,7 +91,7 @@ export default function MatchDetail({ apiBase }) {
   if (loading) return (
     <div className="match-detail">
       <div className="nav-bar sticky">
-        <Link to={roundNumber ? `/round/${roundNumber}` : '/predictions'} className="nav-btn">
+        <Link to={roundLink} className="nav-btn">
           &larr; {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
         </Link>
       </div>
@@ -89,7 +101,7 @@ export default function MatchDetail({ apiBase }) {
   if (error) return (
     <div className="error-container">
       <div className="nav-bar sticky">
-        <Link to={roundNumber ? `/round/${roundNumber}` : '/predictions'} className="nav-btn">&larr; Back</Link>
+        <Link to={roundLink} className="nav-btn">&larr; Back</Link>
       </div>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
@@ -152,7 +164,7 @@ export default function MatchDetail({ apiBase }) {
   return (
     <div className="match-detail">
       <div className="nav-bar sticky">
-        <Link to={roundNumber ? `/round/${roundNumber}` : '/predictions'} className="nav-btn">
+        <Link to={roundLink} className="nav-btn">
           &larr; {roundNumber ? `Round ${roundNumber}` : 'Rounds'}
         </Link>
         {roundMatches && roundMatches.length > 1 && (
