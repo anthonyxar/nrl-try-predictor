@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { fetchJson } from '../api'
 
@@ -66,6 +67,20 @@ export default function SearchBar({ apiBase }) {
     (name || '').split(' ').map(n => n[0] || '').join('').substring(0, 2).toUpperCase()
 
   const hasResults = results && (results.players?.length > 0 || results.teams?.length > 0)
+
+  // Plain <input>s outside a <form> never get a submit event, so Enter did
+  // nothing — jump to the top result instead, same as clicking it.
+  const handleKeyDown = (e) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    const firstTeam = results?.teams?.[0]
+    const firstPlayer = results?.players?.[0]
+    if (firstTeam) {
+      handleTeamClick(typeof firstTeam === 'string' ? firstTeam : firstTeam.name)
+    } else if (firstPlayer) {
+      handlePlayerClick(firstPlayer.name)
+    }
+  }
 
   const resultsBody = (
     <>
@@ -151,6 +166,7 @@ export default function SearchBar({ apiBase }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => { if (hasResults) setOpen(true) }}
+            onKeyDown={handleKeyDown}
           />
           {query && (
             <button className="search-clear" onClick={() => { setQuery(''); setResults(null); setOpen(false) }}>
@@ -172,7 +188,12 @@ export default function SearchBar({ apiBase }) {
         </svg>
       </button>
 
-      {mobileOpen && (
+      {mobileOpen && createPortal(
+        // Portalled to <body> — see the matching note in Sidebar.jsx's
+        // MobileNavTrigger: the header's `backdrop-filter` makes it a
+        // containing block for `position: fixed` descendants, so this
+        // overlay would otherwise be squashed into the header's own slim
+        // box instead of covering the viewport.
         <div className="search-mobile-overlay">
           <div className="search-mobile-overlay-bar">
             <div className="search-input-wrap">
@@ -186,6 +207,7 @@ export default function SearchBar({ apiBase }) {
                 placeholder="Search players or teams..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
               />
               {query && (
                 <button className="search-clear" onClick={() => { setQuery(''); setResults(null) }}>
@@ -202,7 +224,8 @@ export default function SearchBar({ apiBase }) {
               <div className="search-empty">Type at least 2 characters to search</div>
             ) : resultsBody}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   )

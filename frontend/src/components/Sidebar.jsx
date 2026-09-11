@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink, useLocation } from 'react-router-dom'
 
 const STORAGE_KEY = 'nrltp_sidebar_collapsed'
@@ -139,7 +140,13 @@ export function MobileNavTrigger() {
         </svg>
       </button>
 
-      {open && (
+      {open && createPortal(
+        // Portalled to <body>: the header is a `backdrop-filter` ancestor,
+        // which creates a containing block for `position: fixed`
+        // descendants — an overlay rendered inside the header ends up
+        // sized/clipped to the header's own small box instead of the
+        // viewport (only the top sliver peeks out). Escaping the header's
+        // subtree avoids that trap entirely.
         <div className="sidebar-mobile-overlay">
           <div className="sidebar-mobile-overlay-bar">
             <span className="sidebar-brand">
@@ -153,7 +160,8 @@ export function MobileNavTrigger() {
           <nav className="sidebar-mobile-nav">
             <NavItems location={location} />
           </nav>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   )

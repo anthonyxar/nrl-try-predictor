@@ -31,6 +31,14 @@ export default function App() {
                 </h1>
                 <p className="subtitle">Live player try-scoring probabilities for the 2026 season</p>
               </div>
+              {/* Mobile-only: centred title shown once the nav trigger and
+                  search trigger have their own slim slots either side.
+                  Hidden on desktop, where the logo above already does this. */}
+              <h1 className="mobile-header-title">
+                <Link to="/" className="logo-link">
+                  <span className="logo-nrl">NRL</span> Try Predictor
+                </Link>
+              </h1>
               <div className="header-right">
                 <SearchBar apiBase={API_BASE} />
               </div>
