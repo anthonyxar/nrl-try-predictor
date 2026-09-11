@@ -31,11 +31,16 @@ export default function Dashboard({ apiBase }) {
     [betting]
   )
 
-  const cumulative = useMemo(() => {
+  const chartPoints = useMemo(() => {
     let running = 0
     return settledPicks.map(p => {
       running += p.profit_per_unit_stake * stakeValue
-      return running
+      return {
+        value: running,
+        round: p.round_number,
+        matchup: `${p.home_team} v ${p.away_team}`,
+        player: p.player_name,
+      }
     })
   }, [settledPicks, stakeValue])
 
@@ -189,7 +194,7 @@ export default function Dashboard({ apiBase }) {
 
             {settledPicks.length > 1 && (
               <div className="pnl-chart-wrap">
-                <PnlChart values={cumulative} />
+                <PnlChart points={chartPoints} />
               </div>
             )}
 
@@ -259,28 +264,93 @@ export default function Dashboard({ apiBase }) {
   )
 }
 
-function PnlChart({ values }) {
+function PnlChart({ points }) {
+  const [hoverIdx, setHoverIdx] = useState(null)
   const width = 600
-  const height = 160
-  const pad = 8
+  const height = 180
+  const padLeft = 54
+  const padRight = 12
+  const padTop = 14
+  const padBottom = 22
+  const plotW = width - padLeft - padRight
+  const plotH = height - padTop - padBottom
+
+  const values = points.map(p => p.value)
   const min = Math.min(0, ...values)
   const max = Math.max(0, ...values)
   const range = max - min || 1
 
-  const points = values.map((v, i) => {
-    const x = values.length > 1 ? (i / (values.length - 1)) * (width - pad * 2) + pad : width / 2
-    const y = height - pad - ((v - min) / range) * (height - pad * 2)
-    return `${x.toFixed(1)},${y.toFixed(1)}`
-  }).join(' ')
+  const xAt = (i) => points.length > 1 ? padLeft + (i / (points.length - 1)) * plotW : padLeft + plotW / 2
+  const yAt = (v) => padTop + plotH - ((v - min) / range) * plotH
 
-  const zeroY = height - pad - ((0 - min) / range) * (height - pad * 2)
-  const last = values[values.length - 1]
-  const lineColour = last >= 0 ? 'var(--accent)' : '#dc2626'
+  const linePoints = points.map((p, i) => `${xAt(i).toFixed(1)},${yAt(p.value).toFixed(1)}`).join(' ')
+  const zeroY = yAt(0)
+  const last = points[points.length - 1]
+  const lineColour = last.value >= 0 ? 'var(--accent)' : '#dc2626'
+
+  const fmt = (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`
+
+  const handleMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const relX = ((e.clientX - rect.left) / rect.width) * width
+    let idx = points.length > 1 ? Math.round(((relX - padLeft) / plotW) * (points.length - 1)) : 0
+    setHoverIdx(Math.max(0, Math.min(points.length - 1, idx)))
+  }
+
+  const hovered = hoverIdx != null ? points[hoverIdx] : null
 
   return (
-    <svg className="pnl-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-      <line x1={pad} y1={zeroY} x2={width - pad} y2={zeroY} stroke="var(--border)" strokeWidth="1" strokeDasharray="4 4" />
-      <polyline points={points} fill="none" stroke={lineColour} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
+    <div className="pnl-chart-container">
+      <svg
+        className="pnl-chart"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        onMouseMove={handleMove}
+        onMouseLeave={() => setHoverIdx(null)}
+      >
+        <line x1={padLeft} y1={yAt(max)} x2={width - padRight} y2={yAt(max)} className="pnl-gridline" />
+        <text x={padLeft - 6} y={yAt(max)} textAnchor="end" dominantBaseline="middle" className="pnl-axis-label">{fmt(max)}</text>
+
+        <line x1={padLeft} y1={zeroY} x2={width - padRight} y2={zeroY} className="pnl-gridline" />
+        <text x={padLeft - 6} y={zeroY} textAnchor="end" dominantBaseline="middle" className="pnl-axis-label">$0</text>
+
+        {min < 0 && (
+          <>
+            <line x1={padLeft} y1={yAt(min)} x2={width - padRight} y2={yAt(min)} className="pnl-gridline" />
+            <text x={padLeft - 6} y={yAt(min)} textAnchor="end" dominantBaseline="middle" className="pnl-axis-label">{fmt(min)}</text>
+          </>
+        )}
+
+        <text x={padLeft} y={height - 4} textAnchor="start" className="pnl-axis-label">R{points[0].round}</text>
+        <text x={width - padRight} y={height - 4} textAnchor="end" className="pnl-axis-label">R{last.round}</text>
+
+        <polyline points={linePoints} fill="none" stroke={lineColour} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+
+        <circle cx={xAt(points.length - 1)} cy={yAt(last.value)} r="5" fill={lineColour} stroke="var(--surface)" strokeWidth="2" />
+        <text x={xAt(points.length - 1) - 9} y={yAt(last.value) - 10} textAnchor="end" className="pnl-end-label" fill={lineColour}>
+          {fmt(last.value)}
+        </text>
+
+        {hovered && (
+          <>
+            <line x1={xAt(hoverIdx)} y1={padTop} x2={xAt(hoverIdx)} y2={padTop + plotH} className="pnl-crosshair" />
+            <circle cx={xAt(hoverIdx)} cy={yAt(hovered.value)} r="5" fill={lineColour} stroke="var(--surface)" strokeWidth="2" />
+          </>
+        )}
+      </svg>
+      {hovered && (
+        <div
+          className="pnl-tooltip"
+          style={{
+            left: `${(xAt(hoverIdx) / width) * 100}%`,
+            top: `${(yAt(hovered.value) / height) * 100}%`,
+          }}
+        >
+          <div className="pnl-tooltip-value" style={{ color: lineColour }}>{fmt(hovered.value)}</div>
+          <div className="pnl-tooltip-meta">R{hovered.round} &middot; {hovered.matchup}</div>
+          <div className="pnl-tooltip-meta">{hovered.player}</div>
+        </div>
+      )}
+    </div>
   )
 }
