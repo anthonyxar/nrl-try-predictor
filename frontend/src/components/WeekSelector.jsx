@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from './LoadingSpinner'
 import MatchCard from './MatchCard'
@@ -12,6 +12,7 @@ export default function WeekSelector({ apiBase }) {
   const [teams, setTeams] = useState([])
   const [selectedTeam, setSelectedTeam] = useState('')
   const [selectedYear, setSelectedYear] = useState(SEASONS[0])
+  const [roundOrder, setRoundOrder] = useState('desc')
   const [schedule, setSchedule] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -42,6 +43,12 @@ export default function WeekSelector({ apiBase }) {
     return () => { cancelled = true }
   }, [apiBase, selectedTeam, selectedYear, retryCount])
 
+  const sortedRoundEntries = useMemo(() => {
+    const entries = Object.entries(rounds)
+    entries.sort((a, b) => roundOrder === 'desc' ? Number(b[0]) - Number(a[0]) : Number(a[0]) - Number(b[0]))
+    return entries
+  }, [rounds, roundOrder])
+
   const handleMatchClick = (match) => {
     if (!match.match_url) return
     navigate(`/match?url=${encodeURIComponent(match.match_url)}`)
@@ -64,6 +71,17 @@ export default function WeekSelector({ apiBase }) {
           >
             {SEASONS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
+          {!selectedTeam && (
+            <select
+              className="season-select"
+              value={roundOrder}
+              onChange={(e) => setRoundOrder(e.target.value)}
+              title="Round order"
+            >
+              <option value="desc">Newest first</option>
+              <option value="asc">Oldest first</option>
+            </select>
+          )}
         </div>
       </div>
 
@@ -95,7 +113,7 @@ export default function WeekSelector({ apiBase }) {
 
       {!loading && !error && !selectedTeam && (
         <div className="rounds-grid">
-          {Object.entries(rounds).map(([num, info]) => (
+          {sortedRoundEntries.map(([num, info]) => (
             <button
               key={num}
               className="round-card"
