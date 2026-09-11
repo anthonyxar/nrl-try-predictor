@@ -3128,94 +3128,6 @@ body {
 }
 
 /* ========================================
-   Models page
-   ======================================== */
-.models-page {
-  max-width: 960px;
-  margin: 0 auto;
-}
-
-.models-header {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  margin-bottom: 1rem;
-}
-
-.models-header h2 {
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.models-intro {
-  color: #4b5563;
-  font-size: 0.95rem;
-  line-height: 1.55;
-  margin-bottom: 1.5rem;
-}
-
-.inline-link {
-  color: #16a34a;
-  text-decoration: underline;
-  font-weight: 600;
-}
-
-.model-card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1.25rem;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-
-.model-card-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 0.75rem;
-}
-
-.model-name {
-  font-size: 1.15rem;
-  font-weight: 700;
-  margin: 0;
-}
-
-.model-tagline {
-  margin: 0.15rem 0 0;
-  color: #6b7280;
-  font-size: 0.9rem;
-}
-
-.model-description p {
-  color: #374151;
-  font-size: 0.92rem;
-  line-height: 1.6;
-  margin: 0 0 0.6rem;
-}
-
-.model-description p:last-child {
-  margin-bottom: 0;
-}
-
-.models-factor-list {
-  margin: 0;
-  padding-left: 1.2rem;
-  color: #374151;
-  font-size: 0.92rem;
-  line-height: 1.6;
-}
-
-.models-factor-list li {
-  margin-bottom: 0.5rem;
-}
-
-.models-factor-list li:last-child {
-  margin-bottom: 0;
-}
-
-/* ========================================
    Sidebar
    ======================================== */
 .sidebar {
@@ -3314,11 +3226,6 @@ body {
   padding: 0.75rem;
 }
 
-.sidebar-footer {
-  padding: 0.75rem;
-  border-top: 1px solid var(--border);
-}
-
 .sidebar-link {
   display: flex;
   align-items: center;
@@ -3346,6 +3253,78 @@ body {
 .sidebar-link.active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Mobile nav trigger + overlay — mirrors the search-mobile-trigger /
+   search-mobile-overlay pattern in SearchBar.jsx, but docked left instead
+   of right. Rendered by MobileNavTrigger inside the header (see App.jsx),
+   so header-top's space-between puts it opposite the search trigger. */
+.sidebar-mobile-trigger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar-mobile-trigger:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sidebar-mobile-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-mobile-overlay-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.sidebar-mobile-close {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-mobile-nav {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem;
+}
+
+.sidebar-mobile-nav .sidebar-link {
+  padding: 0.85rem 0.9rem;
+  font-size: 0.95rem;
 }
 
 /* ========================================
@@ -3818,21 +3797,23 @@ body {
 
 @media (max-width: 640px) {
   /* Header — logo/subtitle/full search bar took up too much vertical
-     space on a phone. Collapse to a slim bar with just the search
-     trigger button, right-aligned (placed after the base header/search
-     rules further up the file so it actually wins the cascade — an
-     earlier attempt at this same override lost to those base rules
-     purely on source order). */
+     space on a phone. Collapse to a slim bar: nav trigger on the left,
+     search trigger on the right, mirrored via header-top's existing
+     space-between (placed after the base header/search rules further up
+     the file so it actually wins the cascade — an earlier attempt at
+     this same override lost to those base rules purely on source order). */
   .header {
     padding: 0.6rem 1rem;
   }
 
   .header-left {
-    display: none;
+    display: flex;
+    align-items: center;
   }
 
-  .header-top {
-    justify-content: flex-end;
+  .header-left .logo,
+  .header-left .subtitle {
+    display: none;
   }
 
   .search-bar-desktop {
@@ -3840,6 +3821,17 @@ body {
   }
 
   .search-mobile-trigger {
+    display: flex;
+  }
+
+  /* Sidebar becomes the top-docked nav trigger + overlay instead of a
+     vertical rail — a thin strip along the full page height didn't
+     actually free up much width on a phone. */
+  .sidebar-desktop {
+    display: none;
+  }
+
+  .sidebar-mobile-trigger {
     display: flex;
   }
 

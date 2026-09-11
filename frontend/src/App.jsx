@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Link } from 'react-router-dom'
-import Sidebar from './components/Sidebar'
+import Sidebar, { MobileNavTrigger } from './components/Sidebar'
 import Dashboard from './components/Dashboard'
 import WeekSelector from './components/WeekSelector'
 import Draw from './components/Draw'
@@ -10,7 +10,6 @@ import PlayersList from './components/PlayersList'
 import TeamDetail from './components/TeamDetail'
 import TeamsList from './components/TeamsList'
 import AccuracyDashboard from './components/AccuracyDashboard'
-import Models from './components/Models'
 import SearchBar from './components/SearchBar'
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api'
@@ -24,6 +23,7 @@ export default function App() {
           <div className="header-inner">
             <div className="header-top">
               <div className="header-left">
+                <MobileNavTrigger />
                 <h1 className="logo">
                   <Link to="/" className="logo-link">
                     <span className="logo-nrl">NRL</span> Try Predictor
@@ -48,7 +48,6 @@ export default function App() {
             <Route path="/player" element={<PlayerDetail apiBase={API_BASE} />} />
             <Route path="/match" element={<MatchDetail apiBase={API_BASE} />} />
             <Route path="/accuracy" element={<AccuracyDashboard apiBase={API_BASE} />} />
-            <Route path="/models" element={<Models />} />
           </Routes>
         </main>
         <footer className="footer">
