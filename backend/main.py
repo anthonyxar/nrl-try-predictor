@@ -44,7 +44,7 @@ from odds_client import (
     fetch_bookmaker_odds,
     lookup_bookmaker_odds,
     has_api_key as has_odds_api_key,
-    compute_best_edge_pick,
+    compute_best_edge_picks,
 )
 import log_handler
 
@@ -987,17 +987,17 @@ def _compute_match_detail(url, raw, home_players, away_players,
                 if bk_list:
                     p["bookmaker_odds"] = bk_list
 
-        # Capture the match's best betting-edge pick once, pre-kickoff, for
+        # Capture the match's top betting-edge picks once, pre-kickoff, for
         # the Dashboard's profit/loss simulation. Never recomputed after —
         # see edge_picks table comment in database.py::init_db().
         if not is_completed and before_season and before_round and not get_edge_pick(url):
-            pick = compute_best_edge_pick(
+            picks = compute_best_edge_picks(
                 predictions["home"], predictions["away"],
                 home_nickname, away_nickname,
                 before_season, before_round, url,
             )
-            if pick:
-                save_edge_pick(**pick)
+            for rank, pick in enumerate(picks, start=1):
+                save_edge_pick(pick_rank=rank, **pick)
 
     win_prediction = predict_win_probability(
         home_nickname, away_nickname,

@@ -39,6 +39,27 @@ export default function Dashboard({ apiBase }) {
     })
   }, [settledPicks, stakeValue])
 
+  // Group the flat, rank-ordered pick list into one card per game so the
+  // top 3 edge picks for a match show together with their breakdown.
+  const games = useMemo(() => {
+    const byMatch = new Map()
+    for (const p of betting?.picks || []) {
+      if (!byMatch.has(p.match_url)) {
+        byMatch.set(p.match_url, {
+          match_url: p.match_url,
+          round_number: p.round_number,
+          home_team: p.home_team,
+          away_team: p.away_team,
+          picks: [],
+        })
+      }
+      byMatch.get(p.match_url).picks.push(p)
+    }
+    const list = Array.from(byMatch.values())
+    list.forEach(g => g.picks.sort((a, b) => (a.pick_rank || 1) - (b.pick_rank || 1)))
+    return list.reverse() // most recently captured game first
+  }, [betting])
+
   if (loading) return <LoadingSpinner text="Loading dashboard..." />
   if (error) return (
     <div className="error-container">
@@ -60,7 +81,7 @@ export default function Dashboard({ apiBase }) {
     <div className="dashboard">
       <div className="dashboard-header">
         <h2>Dashboard</h2>
-        <p className="dashboard-subtitle">How the model has been performing, and what a $ per-game edge bet would have made.</p>
+        <p className="dashboard-subtitle">How the model has been performing, and what $ edge bets on its top picks per game would have made.</p>
       </div>
 
       {noAccuracyData ? (
@@ -176,31 +197,60 @@ export default function Dashboard({ apiBase }) {
               <div className="betting-pick-row betting-pick-heading">
                 <span className="bp-round">Rd</span>
                 <span className="bp-match">Match</span>
-                <span className="bp-player">Pick</span>
-                <span className="bp-odds">Odds</span>
-                <span className="bp-edge">Edge</span>
+                <span className="bp-player">Picks</span>
+                <span className="bp-odds">Best Odds</span>
+                <span className="bp-edge">Best Edge</span>
                 <span className="bp-status">Result</span>
                 <span className="bp-profit">P/L</span>
               </div>
-              {betting.picks.slice().reverse().map(p => (
-                <div
-                  key={p.match_url}
-                  className={`betting-pick-row clickable ${p.status}`}
-                  onClick={() => navigate(`/match?url=${encodeURIComponent(p.match_url)}`)}
-                >
-                  <span className="bp-round">R{p.round_number}</span>
-                  <span className="bp-match">{p.home_team} v {p.away_team}</span>
-                  <span className="bp-player">{p.player_name}</span>
-                  <span className="bp-odds">{p.bookmaker_decimal_odds.toFixed(2)}</span>
-                  <span className="bp-edge">+{(p.edge * 100).toFixed(1)}%</span>
-                  <span className="bp-status">
-                    <span className={`bp-status-badge ${p.status}`}>{p.status}</span>
-                  </span>
-                  <span className="bp-profit">
-                    {p.status === 'pending' ? '—' : `${p.profit_per_unit_stake >= 0 ? '+' : ''}$${(p.profit_per_unit_stake * stakeValue).toFixed(2)}`}
-                  </span>
-                </div>
-              ))}
+              {games.map(g => {
+                const settled = g.picks.filter(p => p.status !== 'pending')
+                const wins = settled.filter(p => p.status === 'won').length
+                const gameProfit = g.picks.reduce(
+                  (sum, p) => sum + (p.status === 'pending' ? 0 : p.profit_per_unit_stake * stakeValue), 0
+                )
+                const best = g.picks[0]
+                const resultClass = settled.length === 0 ? '' : wins === settled.length ? 'won' : wins === 0 ? 'lost' : 'mixed'
+                return (
+                  <div key={g.match_url} className="betting-game-card">
+                    <div
+                      className={`betting-pick-row betting-game-header clickable ${resultClass}`}
+                      onClick={() => navigate(`/match?url=${encodeURIComponent(g.match_url)}`)}
+                    >
+                      <span className="bp-round">R{g.round_number}</span>
+                      <span className="bp-match">{g.home_team} v {g.away_team}</span>
+                      <span className="bp-player">{g.picks.length} pick{g.picks.length !== 1 ? 's' : ''}</span>
+                      <span className="bp-odds">{best.bookmaker_decimal_odds.toFixed(2)}</span>
+                      <span className="bp-edge">+{(best.edge * 100).toFixed(1)}%</span>
+                      <span className="bp-status">
+                        {settled.length > 0
+                          ? <span className={`bp-status-badge ${resultClass}`}>{wins}/{settled.length}</span>
+                          : <span className="bp-status-badge">pending</span>}
+                      </span>
+                      <span className="bp-profit">
+                        {settled.length === 0 ? '—' : `${gameProfit >= 0 ? '+' : ''}$${gameProfit.toFixed(2)}`}
+                      </span>
+                    </div>
+                    <div className="betting-game-breakdown">
+                      {g.picks.map(p => (
+                        <div key={`${p.match_url}-${p.pick_rank}`} className={`betting-pick-row betting-breakdown-row ${p.status}`}>
+                          <span className="bp-round">#{p.pick_rank}</span>
+                          <span className="bp-match">{p.player_name} <span className="bp-breakdown-team">({p.player_team})</span></span>
+                          <span className="bp-player">{p.bookmaker_name}</span>
+                          <span className="bp-odds">{p.bookmaker_decimal_odds.toFixed(2)}</span>
+                          <span className="bp-edge">+{(p.edge * 100).toFixed(1)}%</span>
+                          <span className="bp-status">
+                            <span className={`bp-status-badge ${p.status}`}>{p.status}</span>
+                          </span>
+                          <span className="bp-profit">
+                            {p.status === 'pending' ? '—' : `${p.profit_per_unit_stake >= 0 ? '+' : ''}$${(p.profit_per_unit_stake * stakeValue).toFixed(2)}`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </>
         )}

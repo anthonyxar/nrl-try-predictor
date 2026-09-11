@@ -3481,6 +3481,38 @@ body {
   color: #dc2626;
 }
 
+.bp-status-badge.mixed {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.betting-game-card:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.betting-game-header {
+  border-bottom: none !important;
+}
+
+.betting-game-breakdown {
+  background: var(--bg);
+}
+
+.betting-breakdown-row {
+  font-size: 0.78rem;
+  padding-left: 1.75rem;
+  color: var(--text-secondary);
+}
+
+.betting-breakdown-row:not(:last-child) {
+  border-bottom: 1px dashed var(--border);
+}
+
+.bp-breakdown-team {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
 /* ========================================
    Teams / Players index pages
    ======================================== */

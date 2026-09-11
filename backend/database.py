@@ -313,14 +313,15 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_season ON predictions(season, round_number)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_version ON predictions(model_version)")
 
-    # Betting-edge pick tracking — one row per match: the single best positive
-    # model-vs-bookmaker edge try-scorer pick, captured once (pre-kickoff) and
-    # never overwritten, so the Dashboard's profit/loss simulation isn't
-    # subject to look-ahead bias from odds moving closer to kickoff.
+    # Betting-edge pick tracking — up to `limit` (3) rows per match: the top
+    # positive model-vs-bookmaker edge try-scorer picks, ranked by pick_rank
+    # (1 = best edge), captured once (pre-kickoff) and never overwritten, so
+    # the Dashboard's profit/loss simulation isn't subject to look-ahead bias
+    # from odds moving closer to kickoff.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS edge_picks (
             id SERIAL PRIMARY KEY,
-            match_url TEXT UNIQUE NOT NULL,
+            match_url TEXT NOT NULL,
             season INTEGER NOT NULL,
             round_number INTEGER NOT NULL,
             home_team TEXT NOT NULL,
@@ -332,10 +333,33 @@ def init_db():
             bookmaker_name TEXT,
             implied_probability REAL NOT NULL,
             edge REAL NOT NULL,
-            captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            pick_rank INTEGER NOT NULL DEFAULT 1,
+            captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(match_url, pick_rank)
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_picks_season ON edge_picks(season, round_number)")
+
+    # Migration: DBs created before pick_rank existed have a single-row-per-match
+    # UNIQUE(match_url) constraint — widen it to UNIQUE(match_url, pick_rank) so
+    # multiple ranked picks per match can coexist.
+    try:
+        conn.execute("ALTER TABLE edge_picks ADD COLUMN pick_rank INTEGER NOT NULL DEFAULT 1")
+        conn.commit()
+        logger.info("Migration: added pick_rank column to edge_picks table")
+    except psycopg2.errors.DuplicateColumn:
+        conn.rollback()
+
+    try:
+        # Only present on DBs created before pick_rank existed — the fresh
+        # CREATE TABLE above already defines the composite constraint inline,
+        # so this whole block is a no-op (UndefinedObject) on a new DB.
+        conn.execute("ALTER TABLE edge_picks DROP CONSTRAINT edge_picks_match_url_key")
+        conn.execute("ALTER TABLE edge_picks ADD CONSTRAINT edge_picks_match_url_rank_key UNIQUE (match_url, pick_rank)")
+        conn.commit()
+        logger.info("Migration: widened edge_picks' unique constraint to (match_url, pick_rank)")
+    except (psycopg2.errors.UndefinedObject, psycopg2.errors.DuplicateObject):
+        conn.rollback()
 
     # Persistent in-memory response cache (survives restarts)
     conn.execute("""
@@ -1660,30 +1684,30 @@ def get_accuracy_stats(model_version: int = None, season: int = None) -> dict:
 # ---- Betting-edge pick tracking ----
 
 
-def get_edge_pick(match_url: str) -> dict:
-    """Check whether a betting-edge pick has already been captured for this match."""
+def get_edge_pick(match_url: str) -> bool:
+    """Check whether betting-edge picks have already been captured for this match."""
     conn = get_db()
     row = conn.execute(
-        "SELECT * FROM edge_picks WHERE match_url = %s", (match_url,)
+        "SELECT 1 FROM edge_picks WHERE match_url = %s LIMIT 1", (match_url,)
     ).fetchone()
     conn.close()
-    return dict(row) if row else None
+    return row is not None
 
 
 def save_edge_pick(match_url: str, season: int, round_number: int, home_team: str, away_team: str,
                    player_name: str, player_team: str, model_probability: float,
                    bookmaker_decimal_odds: float, bookmaker_name: str,
-                   implied_probability: float, edge: float):
-    """Record the best-edge try-scorer pick for a match. Captured once — never updated."""
+                   implied_probability: float, edge: float, pick_rank: int = 1):
+    """Record one ranked best-edge try-scorer pick for a match. Captured once — never updated."""
     conn = get_db()
     conn.execute("""
         INSERT INTO edge_picks
             (match_url, season, round_number, home_team, away_team, player_name, player_team,
-             model_probability, bookmaker_decimal_odds, bookmaker_name, implied_probability, edge)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (match_url) DO NOTHING
+             model_probability, bookmaker_decimal_odds, bookmaker_name, implied_probability, edge, pick_rank)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (match_url, pick_rank) DO NOTHING
     """, (match_url, season, round_number, home_team, away_team, player_name, player_team,
-          model_probability, bookmaker_decimal_odds, bookmaker_name, implied_probability, edge))
+          model_probability, bookmaker_decimal_odds, bookmaker_name, implied_probability, edge, pick_rank))
     conn.commit()
     conn.close()
 
@@ -1697,7 +1721,7 @@ def get_betting_summary() -> dict:
     user's chosen stake without a refetch.
     """
     conn = get_db()
-    picks = conn.execute("SELECT * FROM edge_picks ORDER BY captured_at ASC").fetchall()
+    picks = conn.execute("SELECT * FROM edge_picks ORDER BY captured_at ASC, pick_rank ASC").fetchall()
 
     results = []
     wins = 0

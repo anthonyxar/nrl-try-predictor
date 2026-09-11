@@ -137,16 +137,17 @@ async def fetch_bookmaker_odds() -> dict:
         return {}
 
 
-def compute_best_edge_pick(home_players: list, away_players: list, home_team: str, away_team: str,
-                            season: int, round_number: int, match_url: str) -> Optional[dict]:
+def compute_best_edge_picks(home_players: list, away_players: list, home_team: str, away_team: str,
+                             season: int, round_number: int, match_url: str, limit: int = 3) -> list:
     """
-    Find the single best positive betting-edge try-scorer pick across both
+    Find the top `limit` positive betting-edge try-scorer picks across both
     teams for a match: model probability vs. the best bookmaker price on
-    offer. Returns None if no player has a positive edge (or no bookmaker
-    odds were attached at all). Distinct from `find_value_picks` in
-    model.py, which has nothing to do with bookmaker odds.
+    offer, ranked by edge descending. Returns [] if no player has a positive
+    edge (or no bookmaker odds were attached at all). Distinct from
+    `find_value_picks` in model.py, which has nothing to do with bookmaker
+    odds.
     """
-    best = None
+    candidates = []
     for players, team in [(home_players, home_team), (away_players, away_team)]:
         for p in players:
             bk_list = p.get("bookmaker_odds")
@@ -156,8 +157,8 @@ def compute_best_edge_pick(home_players: list, away_players: list, home_team: st
             implied = 1.0 / best_bk["decimal"]
             model_prob = p.get("try_percentage", 0) / 100.0
             edge = model_prob - implied
-            if edge > 0 and (best is None or edge > best["edge"]):
-                best = {
+            if edge > 0:
+                candidates.append({
                     "match_url": match_url,
                     "season": season,
                     "round_number": round_number,
@@ -170,8 +171,10 @@ def compute_best_edge_pick(home_players: list, away_players: list, home_team: st
                     "bookmaker_name": best_bk["bookmaker"],
                     "implied_probability": round(implied, 4),
                     "edge": round(edge, 4),
-                }
-    return best
+                })
+
+    candidates.sort(key=lambda c: c["edge"], reverse=True)
+    return candidates[:limit]
 
 
 def _normalise(name: str) -> str:
