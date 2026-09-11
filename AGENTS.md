@@ -54,6 +54,8 @@ Static/legacy mock data (hardcoded 2026 squads and fixtures). **Not imported by 
 ### Model: V3 only
 `model.py` runs a single model (formerly "V3" of three side-by-side versions — V1/V2 were deleted, see `docs/adr/0001-single-model-version.md`). There is no `model_version` parameter anywhere in `model.py`'s public functions; predictions always use the full factor set (recency-weighted form, edge vulnerability, venue-specific home advantage, weather, margin-of-victory weighting, rest/bye-week adjustments, season progression, opponent-quality-adjusted try rates, calibration). The `version` query param on `/api/rounds/{n}` and `/api/match` is still accepted (for old bookmarked links) but ignored. `predictions.model_version` is still written as `3` on every insert — the column stayed to avoid a migration and because old rows with `model_version` 1/2 remain queryable history; don't reintroduce per-request version branching without re-reading that ADR. The full factor list (with weights) used to be a `/models` in-app page; it's now `docs/model-factors.md` — update that doc, not a component, when factors change.
 
+**Changing for 2027**: `docs/adr/0006-parallel-model-versions.md` supersedes ADR-0001's "one version only" for the 2027 season — a challenger model (`model_version` 4) will run in shadow alongside the served champion (3). ADR-0001's ban on *per-request version branching inside shared functions* still holds and is the whole point: a model version is a separate module behind a shared interface, never an `if version ==` conditional. See `docs/model-review-2026.md` for the full 2027 plan and `CONTEXT.md` for the champion/challenger vocabulary.
+
 ### Caching layers (three distinct ones — know which one you're touching)
 - `database.py`: in-process TTL cache (`_query_cache`, 30 min) in front of every DB query function, keyed by function name + args. `prefetch_round_data()` bulk-loads/primes this cache for a whole round in ~2 queries instead of N+1 per-team queries — always prefer extending this bulk path over adding new per-team queries in a loop. `invalidate_cache()` / `clear_query_cache()` must be called after any scrape. The connection pool sets `connect_timeout=10` so a slow/unreachable DB can't block the app from starting to serve requests indefinitely.
 - `nrl_client.py`: 60s in-process cache on raw NRL API responses (`_nrl_api_cache`), to survive bursts of requests for the same round.
@@ -88,4 +90,6 @@ Issues live as GitHub issues in anthonyxar/nrl-try-predictor. See `docs/agents/i
 
 ### Domain docs
 
-Single-context layout (root CONTEXT.md + docs/adr/). See `docs/agents/domain.md`.
+Single-context layout (root `CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
+
+`CONTEXT.md` fixes vocabulary that the schema currently contradicts: the `players` table stores **appearances** (one row per player-per-match), not players. Read it before naming anything in this area — `docs/adr/0007-full-history-retention-rolling-model-window.md` renames the table to match.
