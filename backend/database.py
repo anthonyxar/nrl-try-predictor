@@ -2368,6 +2368,12 @@ def search_players(query: str, limit: int = 20, season: int = None) -> list:
     their primary position, total_games, total_tries) to that season only —
     total_games/total_tries are otherwise career totals. Uses ILIKE for
     case-insensitive matching."""
+    # total_tries and headshot used to be correlated subqueries evaluated once
+    # per output row, each re-scanning tries/players and re-computing
+    # regexp_replace() over every row of the joined table — O(distinct
+    # players x table size). try_counts/headshots below compute the same
+    # normalised-name aggregates exactly once, up front, and are then just
+    # hash-joined onto the result like position_counts/totals already were.
     conn = get_db()
     rows = conn.execute("""
         WITH base AS (
@@ -2401,6 +2407,25 @@ def search_players(query: str, limit: int = 20, season: int = None) -> list:
             SELECT norm_name, COUNT(DISTINCT match_id) AS total_games
             FROM base
             GROUP BY norm_name
+        ),
+        try_counts AS (
+            SELECT lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) AS norm_name,
+                   COUNT(*) AS total_tries
+            FROM tries t
+            JOIN matches mt ON t.match_id = mt.id
+            WHERE (%s::int IS NULL OR mt.season = %s::int)
+            GROUP BY norm_name
+        ),
+        headshots AS (
+            SELECT DISTINCT ON (norm_name) norm_name, headshot
+            FROM (
+                SELECT lower(regexp_replace(p3.name, '[^a-zA-Z0-9]', '', 'g')) AS norm_name,
+                       p3.headshot, m3.season, m3.round_number
+                FROM players p3
+                JOIN matches m3 ON p3.match_id = m3.id
+                WHERE p3.headshot IS NOT NULL AND p3.headshot <> ''
+            ) ranked
+            ORDER BY norm_name, season DESC, round_number DESC
         )
         SELECT l.name,
                l.team,
@@ -2408,21 +2433,13 @@ def search_players(query: str, limit: int = 20, season: int = None) -> list:
                l.jersey_number,
                l.latest_round,
                COALESCE(tot.total_games, 0) AS total_games,
-               (SELECT COUNT(*) FROM tries t
-                  JOIN matches mt ON t.match_id = mt.id
-                  WHERE lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) = l.norm_name
-                    AND (%s::int IS NULL OR mt.season = %s::int)) AS total_tries,
-               (SELECT p3.headshot
-                  FROM players p3
-                  JOIN matches m3 ON p3.match_id = m3.id
-                  WHERE lower(regexp_replace(p3.name, '[^a-zA-Z0-9]', '', 'g')) = l.norm_name
-                    AND p3.headshot IS NOT NULL
-                    AND p3.headshot <> ''
-                  ORDER BY m3.season DESC, m3.round_number DESC
-                  LIMIT 1) AS headshot
+               COALESCE(tc.total_tries, 0) AS total_tries,
+               hs.headshot
         FROM latest l
         LEFT JOIN primary_position pp ON pp.norm_name = l.norm_name
         LEFT JOIN totals tot ON tot.norm_name = l.norm_name
+        LEFT JOIN try_counts tc ON tc.norm_name = l.norm_name
+        LEFT JOIN headshots hs ON hs.norm_name = l.norm_name
         ORDER BY l.latest_round DESC
         LIMIT %s
     """, (f"%{query}%", season, season, season, season, limit)).fetchall()
