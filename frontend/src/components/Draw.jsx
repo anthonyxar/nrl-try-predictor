@@ -40,12 +40,9 @@ export default function Draw({ apiBase }) {
     return () => { cancelled = true }
   }, [apiBase, roundNumber, season, retryCount])
 
-  const allRoundsLink = `/predictions?${seasonQuery}`
-
   if (loading) return (
     <div className="draw">
       <div className="nav-bar sticky">
-        <Link to={allRoundsLink} className="nav-btn">&larr; All Rounds</Link>
         <h2 className="nav-bar-title">Round {roundNumber}</h2>
       </div>
       <LoadingSpinner text={`Loading Round ${roundNumber} predictions...`} />
@@ -53,9 +50,6 @@ export default function Draw({ apiBase }) {
   )
   if (error) return (
     <div className="error-container">
-      <div className="nav-bar sticky">
-        <Link to={allRoundsLink} className="nav-btn">&larr; All Rounds</Link>
-      </div>
       <div className="error-message">{error}</div>
       <button className="nav-btn" onClick={() => setRetryCount(c => c + 1)}>Retry</button>
     </div>
@@ -74,7 +68,6 @@ export default function Draw({ apiBase }) {
   return (
     <div className="draw">
       <div className="nav-bar sticky">
-        <Link to={allRoundsLink} className="nav-btn">&larr; All Rounds</Link>
         <div className="nav-bar-group">
           <div className="nav-bar-side nav-bar-side-left">
             {prevRound ? (
