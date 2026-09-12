@@ -1925,20 +1925,27 @@ body {
     padding: 0.4rem 0.5rem;
   }
 
-  /* Docks directly under the sticky header instead of pinning above
+  /* Docks flush under the sticky header instead of pinning above
      .mobile-tabbar at the bottom (the previous placement) — with Back
      plus Prev/Next all visible it wrapped to two rows there, eating a
      lot of vertical space right above the tab bar. Sticky (not fixed)
      so it scrolls with the page and only pins once it reaches
      --mobile-header-h from the top, same mechanism as the desktop
-     version above just with a mobile-sized offset. */
+     version above just with a mobile-sized offset.
+     Negative top/left/right margins cancel .main's 1rem mobile padding
+     so the bar bleeds edge-to-edge flush against the header, the same
+     full-width/square-corner treatment as .mobile-tabbar at the bottom
+     — that width is what makes room for Back + Prev + Next together.
+     Border + shadow point the opposite way from .mobile-tabbar's
+     (down instead of up) since this bar sits at the top of its strip. */
   .nav-bar.sticky {
     position: sticky;
     top: var(--mobile-header-h);
     z-index: 20;
-    margin-bottom: 0.75rem;
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-md);
+    margin: -1rem -1rem 0.75rem;
+    border-radius: 0;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 4px 16px rgba(20, 23, 28, 0.12);
   }
 
   /* Back keeps its own flex slot in the row instead of the desktop

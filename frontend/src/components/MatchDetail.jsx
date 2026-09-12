@@ -88,6 +88,16 @@ export default function MatchDetail({ apiBase }) {
     return `${m.home_team || '?'} vs ${m.away_team || '?'}`
   }
 
+  // Compact 3-letter form for the Prev/Next nav buttons — full names made
+  // that bar too wide on mobile. Same first-3-letters convention already
+  // used for the team-badge fallback in MatchCard.jsx, so it stays one
+  // shorthand rule instead of introducing a second official-code table.
+  const matchNavCode = (m) => {
+    if (!m) return ''
+    const code = (name) => (name || '?').substring(0, 3).toUpperCase()
+    return `${code(m.home_team)} vs ${code(m.away_team)}`
+  }
+
   if (loading) return (
     <div className="match-detail">
       <div className="nav-bar sticky">
@@ -172,7 +182,7 @@ export default function MatchDetail({ apiBase }) {
             <div className="nav-bar-side nav-bar-side-left">
               {prevMatch ? (
                 <Link to={`/match?url=${encodeURIComponent(prevMatch.match_url)}`} className="nav-btn" title={matchNavLabel(prevMatch)}>
-                  &larr; {matchNavLabel(prevMatch)}
+                  &larr; {matchNavCode(prevMatch)}
                 </Link>
               ) : (
                 <span className="nav-btn disabled">&larr; —</span>
@@ -182,7 +192,7 @@ export default function MatchDetail({ apiBase }) {
             <div className="nav-bar-side nav-bar-side-right">
               {nextMatch ? (
                 <Link to={`/match?url=${encodeURIComponent(nextMatch.match_url)}`} className="nav-btn" title={matchNavLabel(nextMatch)}>
-                  {matchNavLabel(nextMatch)} &rarr;
+                  {matchNavCode(nextMatch)} &rarr;
                 </Link>
               ) : (
                 <span className="nav-btn disabled">— &rarr;</span>
