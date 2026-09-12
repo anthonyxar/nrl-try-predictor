@@ -769,7 +769,9 @@ body {
   justify-content: space-between;
   gap: 0.25rem 0.5rem;
   margin-top: 0.3rem;
-  padding-left: 1.5rem;
+  /* .pick-rank's width plus .edge-pick-main's gap, so this line starts
+     exactly under the player name rather than 4px to its left. */
+  padding-left: 2rem;
   font-size: 0.72rem;
   color: #777777;
 }
@@ -789,7 +791,8 @@ body {
   flex-direction: column;
   gap: 0.2rem;
   margin-top: 0.3rem;
-  padding-left: 1.5rem;
+  /* Matches .edge-pick-odds — see the note there. */
+  padding-left: 2rem;
 }
 
 .edge-pick-reason {
@@ -850,10 +853,16 @@ body {
   margin-bottom: 0;
 }
 
+/* Fixed width, not min-width: the fallback Best Edge list ranks players by
+   their overall position (6, 11, 13...), and a two-digit rank measured
+   wider than 20px, shunting its name right while the single-digit rows
+   stayed put. A fixed box makes every name start at the same place. Any
+   change here must move .edge-pick-odds / .edge-pick-reasons with it. */
 .pick-rank {
   font-weight: 700;
   color: #777777;
-  min-width: 20px;
+  width: 24px;
+  flex-shrink: 0;
 }
 
 .pick-name {
@@ -4070,8 +4079,17 @@ body {
     display: flex;
   }
 
+  /* Scroll the bookmaker strip inside the expanded card instead of
+     wrapping it: wrapping reflowed the blocks into ragged rows that were
+     hard to compare price-to-price. min-width/flex-shrink override the
+     base rule's flex-shrink: 0, which would otherwise let the strip push
+     past the card edge instead of clipping and scrolling inside it. */
   .player-odds-row {
-    overflow-x: visible;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 100%;
+    overscroll-behavior-x: contain;
   }
 }
