@@ -143,8 +143,9 @@ export function MobileBrandLink() {
 // Mobile-only (<640px): a bottom-docked tab bar replacing the sidebar as
 // primary nav — the standard mobile-app pattern of always-visible tabs
 // beats a menu you have to open first. Round/match pages layer their own
-// contextual nav-bar just above this one (see .nav-bar.sticky in
-// styles.css) rather than competing with it for the same strip.
+// contextual nav-bar directly under the header instead (see
+// .nav-bar.sticky in styles.css) rather than competing with this one for
+// the same strip.
 export function MobileTabBar() {
   const location = useLocation()
   return (

@@ -1890,10 +1890,17 @@ body {
 @media (max-width: 640px) {
   :root {
     /* Content height of .mobile-tabbar, excluding its own safe-area
-       padding — shared with .nav-bar.sticky's bottom offset and .main's
-       clearance below so the two stay in lockstep by construction instead
-       of by two hand-tuned numbers drifting apart. */
+       padding — shared with .main's clearance below so the two stay in
+       lockstep by construction instead of two hand-tuned numbers
+       drifting apart. */
     --mobile-tabbar-h: 3.75rem;
+    /* Full on-screen height of .header on mobile: 0.6rem top/bottom
+       padding + the 36px icon-button row + 1px border-bottom. The
+       contextual round/match nav bar below docks directly under the
+       header using this constant. Hand-tuned like --mobile-tabbar-h
+       above — if .header's mobile padding or icon size changes, update
+       this alongside it. */
+    --mobile-header-h: 3.5rem;
   }
 
   .main {
@@ -1913,55 +1920,59 @@ body {
      specificity as that base rule, so it needs to win on source order. */
 
   .nav-bar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 0.35rem;
     padding: 0.4rem 0.5rem;
   }
 
-  /* position: sticky (pinned some fixed distance below the header) fought
-     the header's own height changing across breakpoints/redesigns — the
-     offset needed constant re-tuning and kept drifting out of sync,
-     leaving the bar floating with a gap or overlapping content. Docking
-     it to the bottom of the viewport instead sidesteps that entirely: no
-     offset to keep in sync with the header at all. It now stacks directly
-     above .mobile-tabbar (the app's own bottom-docked primary nav) rather
-     than the screen edge, so the two never compete for the same strip.
-     .draw/.match-detail get matching bottom padding below so it doesn't
-     cover the last item. */
+  /* Docks directly under the sticky header instead of pinning above
+     .mobile-tabbar at the bottom (the previous placement) — with Back
+     plus Prev/Next all visible it wrapped to two rows there, eating a
+     lot of vertical space right above the tab bar. Sticky (not fixed)
+     so it scrolls with the page and only pins once it reaches
+     --mobile-header-h from the top, same mechanism as the desktop
+     version above just with a mobile-sized offset. */
   .nav-bar.sticky {
-    position: fixed;
-    top: auto;
-    bottom: var(--mobile-tabbar-h);
-    left: 0;
-    right: 0;
-    margin-bottom: 0;
-    border-radius: 0;
-    box-shadow: 0 -4px 16px rgba(20, 23, 28, 0.12);
-    padding-bottom: 0.5rem;
-    z-index: 300;
+    position: sticky;
+    top: var(--mobile-header-h);
+    z-index: 20;
+    margin-bottom: 0.75rem;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
   }
 
-  .draw,
-  .match-detail {
-    /* On top of .main's own tab-bar clearance above — this only needs to
-       cover .nav-bar.sticky itself, which can wrap to two rows (back
-       button, then prev/next) on narrow phones, so stay generous. */
-    padding-bottom: 6rem;
-  }
-
-  /* On mobile, undo absolute positioning so it stacks normally */
+  /* Back keeps its own flex slot in the row instead of the desktop
+     absolute-left trick — that only stays clear of the centred group
+     because the group is exactly centred, which breaks down at phone
+     widths once Prev/Next carry long team names. */
   .nav-bar > .nav-btn:first-child {
     position: static;
+    flex: 0 0 auto;
   }
 
   .nav-bar-group {
-    flex-basis: 100%;
-    gap: 0.35rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 0.3rem;
+  }
+
+  /* Prev/Next truncate with an ellipsis instead of wrapping to a second
+     row — full team names ("Broncos vs Storm") no longer force the bar
+     to grow taller; the full label is still on the link's title attr. */
+  .nav-bar-side .nav-btn {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .nav-bar-title {
-    font-size: 1rem;
-    min-width: auto;
+    font-size: 0.85rem;
+    min-width: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .nav-btn {
