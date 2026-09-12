@@ -185,6 +185,21 @@ This is the phase that stops you testing in production, which was the stated mot
   it into local Postgres. Depends on Phase E existing; until then, accept a manually-placed
   dump file.
 
+  **Findings from a manual dry run (2026-09-12), to fold into the real script:**
+  - Supabase runs Postgres **17**; the local `nrl-db` container is `postgres:16-alpine`, so
+    its bundled `pg_dump`/`pg_restore` refuse to dump a newer major version
+    (`server version mismatch`). The script needs a dump client on Postgres 17+ — e.g. a
+    throwaway `postgres:17-alpine` container run on the Compose network, not `nrl-db`'s own
+    binaries. A pg_dump 17 script also emits `SET transaction_timeout = ...`, a
+    Postgres-17-only session setting that a 16 server rejects; strip that line (or run the
+    restore through a 17 client too) before piping into local `psql`.
+  - A plain `pg_dump --schema=nrltp` (schema+data together) ordered `interchanges` before
+    `matches` in the data section, which fails the `interchanges_match_id_fkey` FK check on
+    a schema the app already created (via `init_db()`) with the constraint active. Restoring
+    into an already-schema'd DB should `TRUNCATE ... RESTART IDENTITY CASCADE` first, then
+    dump/restore with `--data-only --disable-triggers` so FK order stops mattering.
+  - Always exclude `nrltp.app_logs` and `nrltp.cache_store` (disposable, per §6).
+
 ### Phase B — Production topology
 
 - **B1 — Prod Compose file.** nginx `web` container serving `frontend/dist` and proxying
