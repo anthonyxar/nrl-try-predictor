@@ -1,6 +1,6 @@
 import React from 'react'
 import { Routes, Route, Link } from 'react-router-dom'
-import Sidebar, { MobileNavTrigger } from './components/Sidebar'
+import Sidebar, { MobileBrandLink, MobileTabBar } from './components/Sidebar'
 import Dashboard from './components/Dashboard'
 import WeekSelector from './components/WeekSelector'
 import Draw from './components/Draw'
@@ -23,7 +23,7 @@ export default function App() {
           <div className="header-inner">
             <div className="header-top">
               <div className="header-left">
-                <MobileNavTrigger />
+                <MobileBrandLink />
                 <h1 className="logo">
                   <Link to="/" className="logo-link">
                     <span className="logo-nrl">NRL</span> Try Predictor
@@ -68,6 +68,7 @@ export default function App() {
             </p>
           </div>
         </footer>
+        <MobileTabBar />
       </div>
     </div>
   )

@@ -1888,8 +1888,41 @@ body {
 
 /* Responsive */
 @media (max-width: 640px) {
+  :root {
+    /* Content height of .mobile-tabbar, excluding its own safe-area
+       padding — shared with .nav-bar.sticky's bottom offset and .main's
+       clearance below so the two stay in lockstep by construction instead
+       of by two hand-tuned numbers drifting apart. */
+    --mobile-tabbar-h: 3.75rem;
+  }
+
   .main {
     padding: 1rem;
+    /* Clears .mobile-tabbar, which is fixed below the scrolling content
+       on every mobile page (not just round/match), so its own footer
+       content doesn't end up hidden behind the tab bar. box-sizing:
+       border-box (global reset) means --mobile-tabbar-h is the bar's full
+       on-screen footprint, safe-area padding included, so it's the whole
+       number needed here — no separate env() term. */
+    padding-bottom: calc(var(--mobile-tabbar-h) + 0.75rem);
+  }
+
+  .mobile-tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 310;
+    /* border-box: this is the bar's total on-screen height, with the
+       safe-area padding below eating into the content area rather than
+       adding to it — tabs stay clear of a notched device's home indicator
+       without the bar growing taller than --mobile-tabbar-h. */
+    height: var(--mobile-tabbar-h);
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 16px rgba(20, 23, 28, 0.12);
   }
 
   .nav-bar {
@@ -1903,27 +1936,30 @@ body {
      offset needed constant re-tuning and kept drifting out of sync,
      leaving the bar floating with a gap or overlapping content. Docking
      it to the bottom of the viewport instead sidesteps that entirely: no
-     offset to keep in sync with the header at all. .draw/.match-detail
-     get matching bottom padding below so it doesn't cover the last item. */
+     offset to keep in sync with the header at all. It now stacks directly
+     above .mobile-tabbar (the app's own bottom-docked primary nav) rather
+     than the screen edge, so the two never compete for the same strip.
+     .draw/.match-detail get matching bottom padding below so it doesn't
+     cover the last item. */
   .nav-bar.sticky {
     position: fixed;
     top: auto;
-    bottom: 0;
+    bottom: var(--mobile-tabbar-h);
     left: 0;
     right: 0;
     margin-bottom: 0;
     border-radius: 0;
     box-shadow: 0 -4px 16px rgba(20, 23, 28, 0.12);
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+    padding-bottom: 0.5rem;
     z-index: 300;
   }
 
   .draw,
   .match-detail {
-    /* Generous on purpose — the bar wraps to two rows (back button, then
-       prev/next) on narrow phones, plus env(safe-area-inset-bottom) on
-       notched devices, and this only needs to clear it, not hug it. */
-    padding-bottom: 7rem;
+    /* On top of .main's own tab-bar clearance above — this only needs to
+       cover .nav-bar.sticky itself, which can wrap to two rows (back
+       button, then prev/next) on narrow phones, so stay generous. */
+    padding-bottom: 6rem;
   }
 
   /* On mobile, undo absolute positioning so it stacks normally */
@@ -3221,21 +3257,17 @@ body {
   color: var(--accent);
 }
 
-/* Mobile nav trigger + overlay — mirrors the search-mobile-trigger /
-   search-mobile-overlay pattern in SearchBar.jsx, but docked left instead
-   of right. Rendered by MobileNavTrigger inside the header (see App.jsx),
-   so header-top's space-between puts it opposite the search trigger. */
+/* Mobile brand link — mirrors the search-mobile-trigger's slot but docked
+   left instead of right. Rendered by MobileBrandLink inside the header
+   (see App.jsx), so header-top's space-between puts it opposite the
+   search trigger. Just the mark: primary nav lives in .mobile-tabbar
+   (bottom-docked, always visible), so this has no menu to open. */
 .sidebar-mobile-trigger {
   display: none;
   align-items: center;
-  gap: 0.375rem;
+  justify-content: center;
+  width: 36px;
   height: 36px;
-  padding: 0 0.5rem 0 0.3125rem;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-secondary);
-  cursor: pointer;
   flex-shrink: 0;
 }
 
@@ -3244,74 +3276,39 @@ body {
   flex-shrink: 0;
 }
 
-.sidebar-mobile-trigger:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+/* Bottom-docked primary nav for mobile — see .mobile-tabbar below for the
+   fixed positioning rules (only active under the 640px breakpoint). */
+.mobile-tabbar {
+  display: none;
 }
 
-.sidebar-mobile-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 500;
-  background: var(--bg);
+.mobile-tab {
+  flex: 1;
   display: flex;
   flex-direction: column;
-}
-
-.sidebar-mobile-overlay-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
-}
-
-.sidebar-mobile-close {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 1.4rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.sidebar-mobile-overlay-title {
-  flex: 1;
-  min-width: 0;
-  text-align: center;
-  font-weight: 800;
-  font-size: 0.95rem;
-  color: var(--text-primary);
-}
-
-/* Balances the close button's width so the title above is genuinely
-   centered, not just centered within the leftover space. */
-.sidebar-mobile-overlay-spacer {
-  flex-shrink: 0;
-  width: 36px;
-}
-
-.sidebar-mobile-nav {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
   gap: 0.2rem;
-  padding: 0.75rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.62rem;
+  min-width: 0;
 }
 
-.sidebar-mobile-nav .sidebar-link {
-  padding: 0.85rem 0.9rem;
-  font-size: 0.95rem;
+.mobile-tab svg {
+  flex-shrink: 0;
+}
+
+.mobile-tab-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.mobile-tab.active {
+  color: var(--accent);
 }
 
 /* ========================================

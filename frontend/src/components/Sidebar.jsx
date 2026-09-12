@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { NavLink, useLocation } from 'react-router-dom'
 
 const STORAGE_KEY = 'nrltp_sidebar_collapsed'
@@ -98,8 +97,8 @@ export default function Sidebar() {
 
   // Collapsed: an icon-only rail, not an empty strip — the nav icons stay
   // clickable so collapsing doesn't cost people the ability to navigate.
-  // Desktop/tablet only — hidden below 640px in favour of the top-docked
-  // mobile nav (MobileNavTrigger) so it stops eating screen width on phones.
+  // Desktop/tablet only — hidden below 640px in favour of the bottom-docked
+  // MobileTabBar so it stops eating screen width on phones.
   return (
     <aside className={`sidebar sidebar-desktop ${collapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-top">
@@ -129,63 +128,38 @@ export default function Sidebar() {
   )
 }
 
-// Mobile-only (<640px): a hamburger button docked in the header, in the
-// mirror spot from the search trigger (left vs. right), that expands into
-// a full-screen nav overlay — same interaction pattern as the mobile
-// search overlay in SearchBar.jsx. Rendered by App.jsx inside the header
-// so the flex layout puts it opposite the search trigger for free.
-export function MobileNavTrigger() {
-  const [open, setOpen] = useState(false)
-  const location = useLocation()
-
-  useEffect(() => {
-    setOpen(false)
-  }, [location.pathname])
-
+// Mobile-only (<640px): the brand mark docked in the header, in the mirror
+// spot from the search trigger (left vs. right), linking home. Now that
+// primary nav lives in the bottom-docked MobileTabBar, this is just the
+// logo — no menu to open, so no hamburger and no overlay.
+export function MobileBrandLink() {
   return (
-    <>
-      {/* Mark AND hamburger, not the mark alone: the mark is the brand, the
-          three bars are the only part anyone reads as "this opens a menu".
-          Dropping them to save width would make the button a logo that
-          mysteriously does something when tapped. */}
-      <button
-        type="button"
-        className="sidebar-mobile-trigger"
-        onClick={() => setOpen(true)}
-        aria-label="Open menu"
-        aria-expanded={open}
-      >
-        <BrandMark size={22} className="sidebar-mobile-trigger-mark" />
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 6h18M3 12h18M3 18h18" />
-        </svg>
-      </button>
+    <NavLink to="/" end className="sidebar-mobile-trigger" aria-label="NRL Try Predictor home">
+      <BrandMark size={22} className="sidebar-mobile-trigger-mark" />
+    </NavLink>
+  )
+}
 
-      {open && createPortal(
-        // Portalled to <body>: the header is a `backdrop-filter` ancestor,
-        // which creates a containing block for `position: fixed`
-        // descendants — an overlay rendered inside the header ends up
-        // sized/clipped to the header's own small box instead of the
-        // viewport (only the top sliver peeks out). Escaping the header's
-        // subtree avoids that trap entirely.
-        <div className="sidebar-mobile-overlay">
-          <div className="sidebar-mobile-overlay-bar">
-            {/* Close sits in the same corner the trigger button opened
-                from, not mirrored to the other side — tapping the same
-                spot to dismiss is the expected mobile pattern, and a
-                close affordance on the opposite side went unnoticed. */}
-            <button type="button" className="sidebar-mobile-close" onClick={() => setOpen(false)} aria-label="Close menu">
-              &times;
-            </button>
-            <span className="sidebar-mobile-overlay-title">Menu</span>
-            <span className="sidebar-mobile-overlay-spacer" aria-hidden="true" />
-          </div>
-          <nav className="sidebar-mobile-nav">
-            <NavItems location={location} />
-          </nav>
-        </div>,
-        document.body
-      )}
-    </>
+// Mobile-only (<640px): a bottom-docked tab bar replacing the sidebar as
+// primary nav — the standard mobile-app pattern of always-visible tabs
+// beats a menu you have to open first. Round/match pages layer their own
+// contextual nav-bar just above this one (see .nav-bar.sticky in
+// styles.css) rather than competing with it for the same strip.
+export function MobileTabBar() {
+  const location = useLocation()
+  return (
+    <nav className="mobile-tabbar">
+      {NAV_ITEMS.map(item => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={({ isActive }) => `mobile-tab ${isActive || isNavItemActive(item, location) ? 'active' : ''}`}
+        >
+          {item.icon}
+          <span className="mobile-tab-label">{item.label}</span>
+        </NavLink>
+      ))}
+    </nav>
   )
 }

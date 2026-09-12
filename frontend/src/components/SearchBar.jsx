@@ -189,8 +189,7 @@ export default function SearchBar({ apiBase }) {
       </button>
 
       {mobileOpen && createPortal(
-        // Portalled to <body> — see the matching note in Sidebar.jsx's
-        // MobileNavTrigger: the header's `backdrop-filter` makes it a
+        // Portalled to <body> — the header's `backdrop-filter` makes it a
         // containing block for `position: fixed` descendants, so this
         // overlay would otherwise be squashed into the header's own slim
         // box instead of covering the viewport.
