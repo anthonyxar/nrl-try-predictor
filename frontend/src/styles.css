@@ -1921,8 +1921,8 @@ body {
 
   .nav-bar {
     flex-wrap: nowrap;
-    gap: 0.35rem;
-    padding: 0.4rem 0.5rem;
+    gap: 0;
+    padding: 0;
   }
 
   /* Docks flush under the sticky header instead of pinning above
@@ -1948,25 +1948,52 @@ body {
     box-shadow: 0 4px 16px rgba(20, 23, 28, 0.12);
   }
 
-  /* Back keeps its own flex slot in the row instead of the desktop
-     absolute-left trick — that only stays clear of the centred group
-     because the group is exactly centred, which breaks down at phone
-     widths once Prev/Next carry long team names. */
+  /* Back / Prev / Next sit as three equal, edge-to-edge segments — like
+     .mobile-tabbar's plain tabs — instead of the desktop's absolute-left
+     Back button next to a separately-centred group (which only stays
+     clear of Back because the group is exactly centred, breaking down at
+     phone widths once Prev/Next carry team names). Back gets one flex
+     share, the group (Prev + Next) gets two, so each of the three ends
+     up the same width. */
   .nav-bar > .nav-btn:first-child {
     position: static;
-    flex: 0 0 auto;
+    flex: 1 1 0;
+    text-align: center;
+    border-right: 1px solid var(--border);
   }
 
   .nav-bar-group {
-    flex: 1 1 auto;
+    flex: 2 1 0;
     min-width: 0;
-    gap: 0.3rem;
+    gap: 0;
   }
 
-  /* Prev/Next truncate with an ellipsis instead of wrapping to a second
-     row — full team names ("Broncos vs Storm") no longer force the bar
-     to grow taller; the full label is still on the link's title attr. */
-  .nav-bar-side .nav-btn {
+  /* A hairline border stands in for the "|" divider glyph between Prev
+     and Next, matching the border-right used after Back — one flat
+     separator style instead of mixing a rule with a text character. */
+  .nav-bar-divider {
+    display: none;
+  }
+
+  .nav-bar-side-left {
+    border-right: 1px solid var(--border);
+  }
+
+  /* No individual rounded/bordered "pill" per button inside the nav bar
+     — flat and flush, each filling its whole segment like a .mobile-tab,
+     rather than looking like buttons floating on top of the bar. Scoped
+     to .nav-bar specifically: .nav-btn is also reused as a standalone
+     "Retry" button elsewhere, which should keep its normal pill look.
+     Prev/Next still truncate with an ellipsis as a safety net; the full
+     label lives in the link's title attribute either way. */
+  .nav-bar .nav-btn {
+    flex: 1;
+    font-size: 0.72rem;
+    padding: 0.65rem 0.5rem;
+    border: none;
+    border-radius: 0;
+    background: none;
+    text-align: center;
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
@@ -1980,11 +2007,6 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .nav-btn {
-    font-size: 0.72rem;
-    padding: 0.35rem 0.6rem;
   }
 
   .matches-grid {
