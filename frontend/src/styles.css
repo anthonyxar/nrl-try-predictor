@@ -1907,23 +1907,10 @@ body {
     padding-bottom: calc(var(--mobile-tabbar-h) + 0.75rem);
   }
 
-  .mobile-tabbar {
-    display: flex;
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 310;
-    /* border-box: this is the bar's total on-screen height, with the
-       safe-area padding below eating into the content area rather than
-       adding to it — tabs stay clear of a notched device's home indicator
-       without the bar growing taller than --mobile-tabbar-h. */
-    height: var(--mobile-tabbar-h);
-    padding-bottom: env(safe-area-inset-bottom);
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    box-shadow: 0 -4px 16px rgba(20, 23, 28, 0.12);
-  }
+  /* .mobile-tabbar's own display/position rules live in the second
+     max-width: 640px block further down the file (after its base
+     `display: none`, same fix as `.sidebar-mobile-trigger` there) — same
+     specificity as that base rule, so it needs to win on source order. */
 
   .nav-bar {
     flex-wrap: wrap;
@@ -3919,7 +3906,7 @@ body {
     display: flex;
   }
 
-  /* Sidebar becomes the top-docked nav trigger + overlay instead of a
+  /* Sidebar becomes the bottom-docked .mobile-tabbar instead of a
      vertical rail — a thin strip along the full page height didn't
      actually free up much width on a phone. */
   .sidebar-desktop {
@@ -3928,6 +3915,27 @@ body {
 
   .sidebar-mobile-trigger {
     display: flex;
+  }
+
+  /* Base .mobile-tabbar rule (`display: none`) lives earlier in the file
+     (near .sidebar-mobile-trigger) at the same specificity — this needs
+     to come after it in source order to actually win on mobile. */
+  .mobile-tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 310;
+    /* border-box: this is the bar's total on-screen height, with the
+       safe-area padding below eating into the content area rather than
+       adding to it — tabs stay clear of a notched device's home indicator
+       without the bar growing taller than --mobile-tabbar-h. */
+    height: var(--mobile-tabbar-h);
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 16px rgba(20, 23, 28, 0.12);
   }
 
   .betting-stat-tiles {
