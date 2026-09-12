@@ -3080,8 +3080,46 @@ body {
   padding: 1.1rem 0.5rem;
 }
 
+/* 64px of rail can't hold the mark and the expand button side by side.
+   Where there's a real pointer, the mark rests in the middle and the
+   button takes its place on hover/focus; on touch, where nothing can be
+   hovered, the button stays put and the mark steps aside — collapsing the
+   rail on a tablet must never be a one-way trip. */
 .sidebar.collapsed .sidebar-brand {
   display: none;
+}
+
+@media (hover: hover) {
+  .sidebar.collapsed .sidebar-top {
+    position: relative;
+  }
+
+  .sidebar.collapsed .sidebar-brand {
+    display: flex;
+    transition: opacity 0.15s ease;
+  }
+
+  .sidebar.collapsed .sidebar-pin-btn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  /* :focus-visible, not :focus-within — clicking the button to collapse
+     leaves it focused, which would strand the rail showing the chevron
+     instead of the mark until you clicked somewhere else. */
+  .sidebar.collapsed .sidebar-top:hover .sidebar-brand,
+  .sidebar.collapsed .sidebar-top:has(.sidebar-pin-btn:focus-visible) .sidebar-brand {
+    opacity: 0;
+  }
+
+  .sidebar.collapsed .sidebar-top:hover .sidebar-pin-btn,
+  .sidebar.collapsed .sidebar-top:has(.sidebar-pin-btn:focus-visible) .sidebar-pin-btn {
+    opacity: 1;
+  }
 }
 
 .sidebar.collapsed .sidebar-link {
@@ -3105,17 +3143,12 @@ body {
 
 .sidebar-brand {
   display: flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  font-weight: 800;
-  font-size: 0.95rem;
-  color: var(--text-primary);
-  overflow: hidden;
-  white-space: nowrap;
+  align-items: center;
+  flex-shrink: 0;
 }
 
-.sidebar-brand-mark {
-  color: var(--accent);
+.sidebar-brand svg {
+  display: block;
 }
 
 .sidebar-pin-btn {

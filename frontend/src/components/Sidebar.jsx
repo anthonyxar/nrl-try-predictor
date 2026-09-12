@@ -14,6 +14,20 @@ function getInitialCollapsed() {
   return false
 }
 
+// The app mark, matching public/favicon.svg exactly — same geometry, same
+// literal colours (not var(--accent)), so the brand in the rail and the
+// icon in the tab can't drift apart. Small-size variant: the single-rise
+// lacing, since this renders at 26px.
+const BRAND_MARK = (
+  <svg viewBox="0 0 512 512" width="26" height="26" aria-hidden="true">
+    <rect width="512" height="512" rx="115" fill="#16a34a" />
+    <g transform="translate(256 256) rotate(-30)">
+      <path d="M -170 0 Q -112 -106 0 -106 Q 112 -106 170 0 Q 112 106 0 106 Q -112 106 -170 0 Z" fill="#ffffff" />
+      <path d="M -88 34 L -6 4 L 88 -46" fill="none" stroke="#15903f" strokeWidth="34" strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  </svg>
+)
+
 const NAV_ITEMS = [
   {
     to: '/', end: true, label: 'Dashboard',
@@ -87,9 +101,8 @@ export default function Sidebar() {
   return (
     <aside className={`sidebar sidebar-desktop ${collapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-top">
-        <span className="sidebar-brand">
-          <span className="sidebar-brand-mark">NRL</span>
-          <span className="sidebar-brand-text">Try Predictor</span>
+        <span className="sidebar-brand" title="NRL Try Predictor" role="img" aria-label="NRL Try Predictor">
+          {BRAND_MARK}
         </span>
         <button
           type="button"
