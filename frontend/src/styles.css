@@ -3219,14 +3219,19 @@ body {
 .sidebar-mobile-trigger {
   display: none;
   align-items: center;
-  justify-content: center;
-  width: 36px;
+  gap: 0.375rem;
   height: 36px;
-  border-radius: 50%;
+  padding: 0 0.5rem 0 0.3125rem;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-secondary);
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar-mobile-trigger-mark {
+  display: block;
   flex-shrink: 0;
 }
 
@@ -3871,12 +3876,25 @@ body {
     display: none;
   }
 
-  /* Sits between the two fixed-width trigger buttons; flex: 1 + centred
-     text is what actually centers it, since the buttons are equal width
-     (36px) — space-between alone wouldn't center a middle flex item. */
+  /* The title is centred by making the slots either side of it share the
+     leftover space equally, rather than by relying on the two trigger
+     buttons happening to be the same width — they aren't any more (the nav
+     trigger carries the mark plus the hamburger, the search trigger is a
+     circle), and the old flex: 1 + equal-buttons trick put the title
+     visibly off-centre the moment that stopped being true. */
+  .header-left,
+  .header-right {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .header-right {
+    justify-content: flex-end;
+  }
+
   .mobile-header-title {
     display: block;
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
     text-align: center;
     font-size: 1.05rem;
