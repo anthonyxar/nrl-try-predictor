@@ -52,6 +52,13 @@ import log_handler
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Gate the two writing background loops (_scrape_sync, _prediction_sync) behind
+# an explicit opt-in, defaulting OFF: without this, running the backend
+# locally against a production DATABASE_URL writes to production from a
+# laptop the moment the process starts. Production sets this true in
+# render.yaml. _warm_cache() is read-only and is never gated by this.
+ENABLE_SYNC_LOOPS = os.environ.get("ENABLE_SYNC_LOOPS", "false").strip().lower() in ("true", "1", "yes")
+
 
 def _backfill_player_headshots(*player_lists):
     """Given one or more lists of player dicts (from parse_team_list), push
@@ -121,8 +128,16 @@ async def _startup_sequence():
     # immediately, even before the background warmup re-runs.
     _restore_cache_from_db()
 
-    asyncio.create_task(_scrape_sync())
-    asyncio.create_task(_prediction_sync())
+    if ENABLE_SYNC_LOOPS:
+        logger.info("ENABLE_SYNC_LOOPS is set — starting scrape sync and prediction sync loops.")
+        asyncio.create_task(_scrape_sync())
+        asyncio.create_task(_prediction_sync())
+    else:
+        logger.warning(
+            "ENABLE_SYNC_LOOPS is not set — scrape sync and prediction sync loops are "
+            "DISABLED, so the DB will not receive new data or accuracy backfill from this "
+            "process. Set ENABLE_SYNC_LOOPS=true to enable them (production always does)."
+        )
     asyncio.create_task(_warm_cache())
 
 

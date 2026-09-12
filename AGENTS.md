@@ -21,7 +21,7 @@ There is no test suite or linter configured for the backend.
 ### Frontend (from `frontend/`)
 ```
 npm install
-npm run dev        # Vite dev server, proxies /api -> http://backend:8000 (see vite.config.js)
+npm run dev        # Vite dev server; proxies /api -> $VITE_PROXY_TARGET (default http://localhost:8000, Compose sets http://backend:8000)
 npm run build       # production build to frontend/dist
 npm run preview
 ```
@@ -31,10 +31,25 @@ No test suite or linter configured for the frontend.
 ```
 docker compose up --build
 ```
-Backend on :8000, frontend (nginx) on :3000. Requires `ODDS_API_KEY` and `DATABASE_URL` env vars (both optional — app degrades gracefully without them).
+Backend on :8000, frontend on :3000, Postgres on the Compose network only (deliberately **not** published to the host — connect with DBeaver/`psql` through the container or an SSH tunnel in production).
+
+`docker-compose.override.yml` is picked up automatically and makes the local stack a dev stack: vite dev server with HMR, `uvicorn --reload` over a bind-mounted `backend/`, and the writing sync loops off. `docker-compose.yml` alone is the prod-shaped stack.
+
+Env vars (all optional — the app degrades gracefully without them):
+
+| Var | Default | Notes |
+|---|---|---|
+| `DATABASE_URL` | the local `db` container | Host must be a **hostname**, never `localhost`, so Postgres can be relocated without a code change. |
+| `DB_SSLMODE` | `require` | Local Compose sets `disable` — a plain Postgres container has no TLS certs. Only applied when the DSN doesn't already specify `sslmode`. |
+| `ENABLE_SYNC_LOOPS` | `false` | Gates the two *writing* background loops. **Off by default on purpose**: pointing a local backend at a production `DATABASE_URL` would otherwise scrape and backfill into production from your laptop. Production sets it `true`. |
+| `ODDS_API_KEY` | unset | Bookmaker odds; value-picks/edge features degrade without it. |
+| `POSTGRES_USER` / `_PASSWORD` / `_DB` | `nrltp` | Local Postgres container only. |
+| `VITE_PROXY_TARGET` | `http://localhost:8000` | Vite dev-proxy target. Compose sets it to `http://backend:8000`. |
 
 ### Data sync cadence
 The backend runs `_scrape_sync()` (`main.py`) every 30 minutes — a background task, started at startup, that calls `scraper.py`'s `sync_current_season()` directly in-process and invalidates the query cache if it found anything new. This is what keeps the production DB current; see `docs/adr/0005-in-process-scrape-sync.md` for why it isn't an external GitHub Actions cron (short version: that cron proved unreliable — GitHub silently auto-disables a `schedule:` trigger after 60 days of repo inactivity, with no self-recovery, and setting that aside its schedule trigger is best-effort with no SLA anyway). `.github/workflows/scrape.yml` still exists but is `workflow_dispatch:`-only now — manual use for bootstrapping an empty DB or forcing a re-scrape, not ongoing sync. The backend also runs a separate background prediction-sync loop (not a scrape) every 10 minutes to backfill accuracy tracking for newly-completed matches.
+
+Both of those loops **write**, so both are gated behind `ENABLE_SYNC_LOOPS`, which defaults to *off*. Production sets it `true` (`render.yaml`); local dev leaves it unset so a laptop pointed at a production DSN can't scrape into production. If data isn't syncing, check that env var first — the backend logs a loud warning at startup when the loops are disabled. `_warm_cache()` is read-only and is never gated.
 
 ## Architecture
 

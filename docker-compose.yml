@@ -1,4 +1,24 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: nrl-db
+    # No ports mapping: the DB is only reachable on the Docker network, not
+    # published to the host. Production access is via an SSH tunnel, and
+    # local dev containers reach this over the compose network by service
+    # name (`db`), so publishing a host port isn't needed.
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-nrltp}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-nrltp}
+      - POSTGRES_DB=${POSTGRES_DB:-nrltp}
+    volumes:
+      - nrl-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nrltp} -d ${POSTGRES_DB:-nrltp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build: ./backend
     container_name: nrl-backend
@@ -8,10 +28,18 @@ services:
       - nrl-data:/app/data
     environment:
       - ODDS_API_KEY=${ODDS_API_KEY:-}
-      - DATABASE_URL=${DATABASE_URL:-}
+      # Host must stay the `db` service name (never `localhost`) so the DB
+      # can be relocated later without touching this default.
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-nrltp}:${POSTGRES_PASSWORD:-nrltp}@db:5432/${POSTGRES_DB:-nrltp}}
+      # Local Postgres container has no TLS certs; production defaults to
+      # `require` when this is unset (see backend/database.py).
+      - DB_SSLMODE=${DB_SSLMODE:-disable}
     dns:
       - 8.8.8.8
       - 8.8.4.4
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -25,3 +53,4 @@ services:
 
 volumes:
   nrl-data:
+  nrl-db-data:
