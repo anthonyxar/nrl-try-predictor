@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="NRL Try Predictor">
+  <defs>
+    <linearGradient id="pitch" x1="0.31" y1="0" x2="0.69" y2="1">
+      <stop offset="0" stop-color="#24c95f"/>
+      <stop offset="0.52" stop-color="#16a34a"/>
+      <stop offset="1" stop-color="#128a3e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#pitch)"/>
+  <g transform="translate(256 256) rotate(-30)">
+    <path d="M -170 0 Q -112 -106 0 -106 Q 112 -106 170 0 Q 112 106 0 106 Q -112 106 -170 0 Z" fill="#ffffff"/>
+    <polyline points="-94,38 -34,-8 12,24 94,-46" fill="none" stroke="#15903f" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="94" cy="-46" r="18" fill="#15903f"/>
+  </g>
+</svg>

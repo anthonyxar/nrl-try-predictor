@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <text x="4" y="20" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="900" fill="#22c55e" text-anchor="start">T</text>
-  <text x="28" y="30" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="900" fill="#22c55e" text-anchor="end">P</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="NRL Try Predictor">
+  <rect width="512" height="512" rx="115" fill="#16a34a"/>
+  <g transform="translate(256 256) rotate(-30)">
+    <path d="M -170 0 Q -112 -106 0 -106 Q 112 -106 170 0 Q 112 106 0 106 Q -112 106 -170 0 Z" fill="#ffffff"/>
+    <path d="M -88 34 L -6 4 L 88 -46" fill="none" stroke="#15903f" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>
