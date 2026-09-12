@@ -1,0 +1,56 @@
+# Dev-only overrides for `docker compose up`, layered automatically on top of
+# docker-compose.yml (Compose loads *.override.yml from the same directory by
+# default — no `-f` flags needed for normal local dev).
+#
+# docker-compose.yml stays prod-shaped on purpose (see docs/migration-plan.md
+# Phase A). Everything here exists only to make local dev hot-reload instead
+# of running the built production images, and is safe to run against a
+# throwaway local Postgres.
+services:
+  backend:
+    # Bind-mount the source so edits on the host are picked up without a
+    # rebuild, then run uvicorn with --reload. This replaces (not appends to)
+    # the image's CMD, which is plain `uvicorn main:app --host 0.0.0.0 --port
+    # ${PORT:-8000}` with no --reload.
+    volumes:
+      - ./backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --reload
+    environment:
+      # Explicit here (rather than relying on backend/main.py's own default)
+      # so anyone reading the dev compose config can see local dev never
+      # starts the scrape/prediction sync loops — i.e. never writes to
+      # whatever DATABASE_URL happens to be configured. Task A3 added this
+      # gate; production is the only place that sets it true.
+      - ENABLE_SYNC_LOOPS=${ENABLE_SYNC_LOOPS:-false}
+
+  frontend:
+    build:
+      context: ./frontend
+      # frontend/Dockerfile is multi-stage (node:20-alpine AS build -> nginx:alpine).
+      # Targeting the intermediate `build` stage gets a plain Node container
+      # to run the Vite dev server in, without needing a separate `image:` or
+      # a second Dockerfile that would conflict with the base file's `build:`.
+      target: build
+    volumes:
+      - ./frontend:/app
+      # frontend/node_modules exists on the host (installed on Windows) and
+      # would otherwise be clobbered by the bind-mount above, shadowing the
+      # Linux-built node_modules baked into the `build` stage image. This
+      # anonymous volume mounts over just that path so the container keeps
+      # its own install.
+      - /app/node_modules
+    # Compose *appends* to list-valued keys like `ports` rather than replacing
+    # them, so adding a second `ports:` entry here would leave the base
+    # file's `3000:80` mapping in place alongside it and be confusing. Instead
+    # of fighting that, make the Vite dev server itself listen on port 80
+    # inside the container, reusing the base mapping as-is — the dev site
+    # stays reachable at http://localhost:3000 same as prod.
+    command: npm run dev -- --host 0.0.0.0 --port 80
+    environment:
+      # vite.config.js proxies /api to this address (task A5). The default
+      # baked into vite.config.js is http://localhost:8000, for running
+      # `npm run dev` directly on the host; inside Compose the backend is
+      # only reachable by its service name on the compose network.
+      - VITE_PROXY_TARGET=http://backend:8000
+    depends_on:
+      - backend

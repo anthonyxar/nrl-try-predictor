@@ -71,6 +71,11 @@ DATABASE_URL = os.environ.get(
     "postgresql://postgres:postgres@localhost:5432/nrl"
 )
 
+# Supabase requires TLS, but a local `postgres:16-alpine` dev container has no
+# certs and can't do sslmode=require — let local dev override it (to
+# "disable") while production keeps the safe default with no config needed.
+DB_SSLMODE = os.environ.get("DB_SSLMODE", "require")
+
 # Connection pool (min 1, max 10 connections)
 _pool = None
 
@@ -83,7 +88,7 @@ def _get_pool():
         dsn = DATABASE_URL
         if "sslmode" not in dsn:
             sep = "&" if "?" in dsn else "?"
-            dsn += f"{sep}sslmode=require"
+            dsn += f"{sep}sslmode={DB_SSLMODE}"
         _pool = psycopg2.pool.ThreadedConnectionPool(
             2, 20, dsn,
             # connect_timeout bounds how long a cold-started container can
@@ -339,6 +344,13 @@ def init_db():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_picks_season ON edge_picks(season, round_number)")
+
+    # Commit before the migration attempts below: on a brand-new DB, the ALTER
+    # TABLE ADD COLUMN is expected to fail with DuplicateColumn (pick_rank is
+    # already in the CREATE TABLE above) and gets rolled back — without this
+    # commit, that rollback would also undo the just-created `predictions` and
+    # `edge_picks` tables since nothing had been committed since interchanges.
+    conn.commit()
 
     # Migration: DBs created before pick_rank existed have a single-row-per-match
     # UNIQUE(match_url) constraint — widen it to UNIQUE(match_url, pick_rank) so

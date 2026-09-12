@@ -18,6 +18,10 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      # Production must run the writing sync loops; the code defaults this
+      # off so local dev against a prod DATABASE_URL doesn't write to prod.
+      - key: ENABLE_SYNC_LOOPS
+        value: "true"
 
   - type: web
     name: nrl-try-predictor-frontend
