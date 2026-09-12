@@ -2510,19 +2510,24 @@ def get_team_roster(team_name: str, season: int = None) -> list:
             SELECT norm_name, COUNT(DISTINCT match_id) AS games
             FROM base
             GROUP BY norm_name
+        ),
+        try_counts AS (
+            SELECT lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) AS norm_name,
+                   COUNT(*) AS tries
+            FROM tries t
+            JOIN matches m2 ON t.match_id = m2.id
+            WHERE t.team = %s AND (%s::int IS NULL OR m2.season = %s::int)
+            GROUP BY norm_name
         )
         SELECT d.name,
                pp.primary_position AS position,
                d.jersey_number,
                COALESCE(tot.games, 0) AS games,
-               (SELECT COUNT(*) FROM tries t
-                  JOIN matches m2 ON t.match_id = m2.id
-                  WHERE lower(regexp_replace(t.player_name, '[^a-zA-Z0-9]', '', 'g')) = d.norm_name
-                    AND t.team = %s
-                    AND (%s::int IS NULL OR m2.season = %s::int)) AS tries
+               COALESCE(tc.tries, 0) AS tries
         FROM display d
         LEFT JOIN primary_position pp ON pp.norm_name = d.norm_name
         LEFT JOIN totals tot ON tot.norm_name = d.norm_name
+        LEFT JOIN try_counts tc ON tc.norm_name = d.norm_name
         ORDER BY d.jersey_number, d.name
     """, (team_name, season, season, team_name, season, season)).fetchall()
     conn.close()
